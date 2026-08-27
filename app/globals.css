@@ -1,0 +1,84 @@
+@import "tailwindcss";
+
+:root {
+  --background: #fdfaf6;
+  --foreground: #201a17;
+  --accent: #db2777;
+  --accent-2: #f97316;
+  --card: #ffffff;
+  --border: #e7e0d8;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --color-card: var(--card);
+  --color-border: var(--border);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-serif: var(--font-lora);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #14100e;
+    --foreground: #f2ece5;
+    --card: #1d1815;
+    --border: #33291f;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+  background-image: radial-gradient(circle at 15% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 45%),
+    radial-gradient(circle at 85% 100%, color-mix(in srgb, var(--accent-2) 7%, transparent), transparent 45%);
+  background-attachment: fixed;
+}
+
+@keyframes sentence-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-sentence-in {
+  animation: sentence-in 0.4s ease-out;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.animate-toast-in {
+  animation: toast-in 0.25s ease-out;
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.animate-pulse-soft {
+  animation: pulse-soft 1.6s ease-in-out infinite;
+}
