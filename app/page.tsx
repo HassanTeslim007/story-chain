@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { savePlayerIdentity } from "@/lib/identity";
+import { ThemePicker } from "@/components/ThemePicker";
 
 export default function HomePage() {
   const router = useRouter();
@@ -60,25 +61,31 @@ export default function HomePage() {
     <main className="flex-1 flex items-center justify-center p-6">
       <div className="w-full max-w-sm space-y-6">
         <div className="text-center space-y-1">
-          <h1 className="text-3xl font-bold" style={{ fontFamily: "var(--font-serif)" }}>
-            Story Chain
-          </h1>
-          <p className="text-sm text-neutral-500">
+          <h1 className="wordmark text-3xl">Story Chain</h1>
+          <p className="text-sm opacity-60">
             AI judges every line. Drag the average below 50, you&apos;re out.
           </p>
         </div>
 
-        <div className="flex rounded-lg border border-neutral-300 dark:border-neutral-700 overflow-hidden text-sm">
+        <div className="space-y-1.5">
+          <p className="section-label">Theme</p>
+          <ThemePicker />
+        </div>
+
+        <div
+          className="flex border overflow-hidden text-sm"
+          style={{ borderColor: "var(--border)", borderRadius: "var(--radius)" }}
+        >
           <button
             className="flex-1 py-2 transition-colors"
-            style={mode === "create" ? { backgroundColor: "var(--color-accent)", color: "white" } : undefined}
+            style={mode === "create" ? { backgroundColor: "var(--accent)", color: "white" } : undefined}
             onClick={() => setMode("create")}
           >
             Create game
           </button>
           <button
             className="flex-1 py-2 transition-colors"
-            style={mode === "join" ? { backgroundColor: "var(--color-accent)", color: "white" } : undefined}
+            style={mode === "join" ? { backgroundColor: "var(--accent)", color: "white" } : undefined}
             onClick={() => setMode("join")}
           >
             Join game
@@ -87,7 +94,7 @@ export default function HomePage() {
 
         <form onSubmit={mode === "create" ? handleCreate : handleJoin} className="space-y-3">
           <input
-            className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2"
+            className="field"
             placeholder="Your name"
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -96,19 +103,19 @@ export default function HomePage() {
 
           {mode === "create" ? (
             <label className="block text-sm space-y-1">
-              <span className="text-neutral-500">Seconds per turn</span>
+              <span className="opacity-60">Seconds per turn</span>
               <input
                 type="number"
                 min={10}
                 max={120}
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2"
+                className="field"
                 value={turnSeconds}
                 onChange={(e) => setTurnSeconds(Number(e.target.value))}
               />
             </label>
           ) : (
             <input
-              className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2 uppercase tracking-widest"
+              className="field uppercase tracking-widest"
               placeholder="Game code"
               value={joinCode}
               onChange={(e) => setJoinCode(e.target.value)}
@@ -118,12 +125,7 @@ export default function HomePage() {
 
           {error && <p className="text-sm text-red-500">{error}</p>}
 
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full rounded-md text-white py-2 font-medium disabled:opacity-50"
-            style={{ backgroundColor: "var(--color-accent)" }}
-          >
+          <button type="submit" disabled={loading} className="btn-primary w-full">
             {loading ? "..." : mode === "create" ? "Create" : "Join"}
           </button>
         </form>

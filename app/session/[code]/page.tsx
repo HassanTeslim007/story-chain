@@ -11,6 +11,7 @@ import Avatar from "@/components/Avatar";
 import CountdownBar from "@/components/CountdownBar";
 import ScoreChart from "@/components/ScoreChart";
 import Toasts, { type Toast } from "@/components/Toasts";
+import { ThemeCycleButton } from "@/components/ThemePicker";
 
 function scoreColor(score: number | null): string {
   if (score === null) return "text-neutral-500";
@@ -238,7 +239,7 @@ export default function SessionPage() {
           <p className="text-sm text-neutral-500">
             Code <span className="font-mono">{code}</span> doesn&apos;t match any game.
           </p>
-          <a href="/" className="inline-block text-sm underline text-accent" style={{ color: "var(--color-accent)" }}>
+          <a href="/" className="inline-block text-sm underline" style={{ color: "var(--accent)" }}>
             Back home
           </a>
         </div>
@@ -279,19 +280,13 @@ export default function SessionPage() {
       <Toasts toasts={toasts} />
 
       <header className="flex items-center justify-between">
-        <h1 className="text-xl font-bold">Story Chain</h1>
+        <h1 className="wordmark text-xl">Story Chain</h1>
         <div className="flex items-center gap-2">
-          <button
-            onClick={sounds.toggleMuted}
-            className="text-sm px-2 py-1 rounded-md border border-neutral-300 dark:border-neutral-700"
-            title={sounds.muted ? "Unmute" : "Mute"}
-          >
+          <ThemeCycleButton />
+          <button onClick={sounds.toggleMuted} className="btn-icon" title={sounds.muted ? "Unmute" : "Mute"}>
             {sounds.muted ? "🔇" : "🔊"}
           </button>
-          <button
-            onClick={handleCopyLink}
-            className="text-sm font-mono tracking-widest text-neutral-500 px-2 py-1 rounded-md border border-neutral-300 dark:border-neutral-700"
-          >
+          <button onClick={handleCopyLink} className="btn-icon font-mono tracking-widest">
             {copied ? "Copied!" : code}
           </button>
         </div>
@@ -300,23 +295,18 @@ export default function SessionPage() {
       {!me && session.status === "lobby" && (
         <form onSubmit={handleJoin} className="flex gap-2">
           <input
-            className="flex-1 rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2"
+            className="field flex-1"
             placeholder="Your name"
             value={joinName}
             onChange={(e) => setJoinName(e.target.value)}
             required
           />
-          <button
-            className="rounded-md text-white px-4 py-2 font-medium"
-            style={{ backgroundColor: "var(--color-accent)" }}
-          >
-            Join
-          </button>
+          <button className="btn-primary">Join</button>
         </form>
       )}
 
-      <section className="rounded-lg border bg-card p-4 space-y-2" style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-card)" }}>
-        <h2 className="text-sm font-medium text-neutral-500">
+      <section className="card p-4 space-y-2">
+        <h2 className="section-label">
           Players {avg !== null && `· avg score ${avg.toFixed(1)}`}
         </h2>
         <ul className="flex flex-wrap gap-2">
@@ -325,12 +315,12 @@ export default function SessionPage() {
               key={p.id}
               className={`flex items-center gap-1.5 text-sm pl-1.5 pr-2.5 py-1 rounded-full border ${
                 !p.is_alive
-                  ? "opacity-40 border-neutral-300 dark:border-neutral-700"
+                  ? "opacity-40 border-[var(--border)]"
                   : p.id === session.current_turn_player_id
                     ? session.phase === "turn"
-                      ? "border-emerald-500"
+                      ? "border-emerald-500 turn-spotlight"
                       : "border-amber-500"
-                    : "border-neutral-300 dark:border-neutral-700"
+                    : "border-[var(--border)]"
               }`}
             >
               <Avatar name={p.name} size={20} faded={!p.is_alive} />
@@ -343,16 +333,11 @@ export default function SessionPage() {
 
       {session.status === "lobby" && (
         <section className="text-center space-y-3">
-          <p className="text-sm text-neutral-500">
+          <p className="text-sm opacity-60">
             Share code <span className="font-mono font-bold">{code}</span> with friends.
           </p>
           {me && (
-            <button
-              onClick={handleStart}
-              disabled={busy || players.length < 2}
-              className="rounded-md text-white px-4 py-2 font-medium disabled:opacity-50"
-              style={{ backgroundColor: "var(--color-accent)" }}
-            >
+            <button onClick={handleStart} disabled={busy || players.length < 2} className="btn-primary">
               {players.length < 2 ? "Waiting for players..." : "Start game"}
             </button>
           )}
@@ -361,10 +346,7 @@ export default function SessionPage() {
 
       {session.status !== "lobby" && (
         <section className="space-y-4">
-          <div
-            className="rounded-lg border p-4 leading-relaxed"
-            style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-card)", fontFamily: "var(--font-serif)" }}
-          >
+          <div className="card p-4 leading-relaxed" style={{ fontFamily: "var(--font-story)" }}>
             {storySentences.map((s, i) => (
               <span key={s.id} className={i === storySentences.length - 1 ? "animate-sentence-in" : ""}>
                 {s.content}{" "}
@@ -373,17 +355,14 @@ export default function SessionPage() {
           </div>
 
           {lastTurn && (
-            <div
-              className="rounded-lg border p-4 space-y-1"
-              style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-card)" }}
-            >
-              <h2 className="text-sm font-medium text-neutral-500">Judge&apos;s verdict</h2>
+            <div className="card p-4 space-y-1">
+              <h2 className="section-label">Judge&apos;s verdict</h2>
               <div className="flex items-center gap-2">
                 <Avatar name={lastTurnPlayer?.name ?? "?"} size={22} />
                 <span className="text-sm font-medium">{lastTurnPlayer?.name ?? "Unknown"}</span>
                 <span className={`ml-auto text-lg font-bold ${scoreColor(lastTurn.score)}`}>{lastTurn.score}</span>
               </div>
-              {lastTurn.reasoning && <p className="text-sm text-neutral-500">{lastTurn.reasoning}</p>}
+              {lastTurn.reasoning && <p className="text-sm opacity-70">{lastTurn.reasoning}</p>}
               {lastTurn.removed && (
                 <p className="text-xs text-red-500 font-medium">
                   Average dropped below 50 — this sentence was removed and {lastTurnPlayer?.name ?? "the player"} is
@@ -394,21 +373,15 @@ export default function SessionPage() {
           )}
 
           {sentences.some((s) => s.turn_number > 0) && (
-            <div
-              className="rounded-lg border p-4"
-              style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-card)" }}
-            >
-              <h2 className="text-sm font-medium text-neutral-500 mb-2">Average score over time</h2>
+            <div className="card p-4">
+              <h2 className="section-label mb-2">Average score over time</h2>
               <ScoreChart sentences={sentences} playerName={playerName} />
             </div>
           )}
 
           {eliminatedPlayers.length > 0 && (
-            <div
-              className="rounded-lg border p-4 space-y-3"
-              style={{ borderColor: "var(--color-border)", backgroundColor: "var(--color-card)" }}
-            >
-              <h2 className="text-sm font-medium text-neutral-500">Eliminated</h2>
+            <div className="card p-4 space-y-3">
+              <h2 className="section-label">Eliminated</h2>
               {eliminatedPlayers.map((p) => {
                 const finalSentence = sentences.find((s) => s.player_id === p.id && s.removed);
                 return (
@@ -418,13 +391,13 @@ export default function SessionPage() {
                       <p className="text-sm font-medium">{p.name}</p>
                       {finalSentence ? (
                         <>
-                          <p className="text-sm text-neutral-500 italic">&ldquo;{finalSentence.content}&rdquo;</p>
+                          <p className="text-sm opacity-70 italic">&ldquo;{finalSentence.content}&rdquo;</p>
                           <p className={`text-xs font-medium ${scoreColor(finalSentence.score)}`}>
                             scored {finalSentence.score}
                           </p>
                         </>
                       ) : (
-                        <p className="text-sm text-neutral-500">Ran out of time.</p>
+                        <p className="text-sm opacity-70">Ran out of time.</p>
                       )}
                     </div>
                   </div>
@@ -452,19 +425,14 @@ export default function SessionPage() {
           {isMyTurn && (
             <form onSubmit={handleSubmit} className="space-y-2">
               <textarea
-                className="w-full rounded-md border border-neutral-300 dark:border-neutral-700 bg-transparent px-3 py-2"
+                className="field"
                 rows={3}
                 placeholder="Continue the story..."
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 required
               />
-              <button
-                type="submit"
-                disabled={busy}
-                className="w-full rounded-md text-white py-2 font-medium disabled:opacity-50"
-                style={{ backgroundColor: "var(--color-accent)" }}
-              >
+              <button type="submit" disabled={busy} className="btn-primary w-full">
                 Submit sentence
               </button>
             </form>
@@ -472,15 +440,10 @@ export default function SessionPage() {
 
           {session.status === "finished" && (
             <div className="text-center space-y-3 py-4">
-              <p className="text-2xl font-bold">{winner ? `${winner.name} wins!` : "Game over"}</p>
-              <p className="text-sm text-neutral-500">Last writer standing.</p>
+              <p className="wordmark text-2xl">{winner ? `${winner.name} wins!` : "Game over"}</p>
+              <p className="text-sm opacity-60">Last writer standing.</p>
               {me && (
-                <button
-                  onClick={handlePlayAgain}
-                  disabled={rematchBusy}
-                  className="rounded-md text-white px-4 py-2 font-medium disabled:opacity-50"
-                  style={{ backgroundColor: "var(--color-accent)" }}
-                >
+                <button onClick={handlePlayAgain} disabled={rematchBusy} className="btn-primary">
                   {rematchBusy ? "Starting..." : "Play again"}
                 </button>
               )}

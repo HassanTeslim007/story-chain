@@ -1,5 +1,6 @@
 @import "tailwindcss";
 
+/* ---- Manuscript (default theme: warm paper, serif ink) ---- */
 :root {
   --background: #fdfaf6;
   --foreground: #201a17;
@@ -7,6 +8,9 @@
   --accent-2: #f97316;
   --card: #ffffff;
   --border: #e7e0d8;
+  --radius: 0.85rem;
+  --font-display: var(--font-lora);
+  --font-story: var(--font-lora);
 }
 
 @theme inline {
@@ -22,7 +26,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="stage"]):not([data-theme="editor"]) {
     --background: #14100e;
     --foreground: #f2ece5;
     --card: #1d1815;
@@ -30,13 +34,152 @@
   }
 }
 
+/* ---- Stage (dark theatrical: spotlight + curtain red, commits to dark) ---- */
+:root[data-theme="stage"] {
+  --background: #0b0708;
+  --foreground: #f3e9dc;
+  --accent: #c81e3a;
+  --accent-2: #d4af37;
+  --card: #17100f;
+  --border: #3a2224;
+  --radius: 0.2rem;
+  --font-display: var(--font-playfair);
+  --font-story: var(--font-playfair);
+}
+
+/* ---- Editor (clean minimal, one accent, generous whitespace) ---- */
+:root[data-theme="editor"] {
+  --background: #ffffff;
+  --foreground: #171717;
+  --accent: #2563eb;
+  --accent-2: #64748b;
+  --card: #fafafa;
+  --border: #e5e7eb;
+  --radius: 0.5rem;
+  --font-display: var(--font-geist-sans);
+  --font-story: var(--font-geist-sans);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="editor"] {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+    --card: #111111;
+    --border: #27272a;
+  }
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
-  background-image: radial-gradient(circle at 15% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 45%),
-    radial-gradient(circle at 85% 100%, color-mix(in srgb, var(--accent-2) 7%, transparent), transparent 45%);
+}
+
+/* Manuscript: soft twin-glow tint + faint paper grain */
+:root:not([data-theme="stage"]):not([data-theme="editor"]) body {
+  background-image:
+    radial-gradient(circle at 15% 0%, color-mix(in srgb, var(--accent) 7%, transparent), transparent 45%),
+    radial-gradient(circle at 85% 100%, color-mix(in srgb, var(--accent-2) 7%, transparent), transparent 45%),
+    repeating-linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--foreground) 2%, transparent) 0px,
+      transparent 1px,
+      transparent 3px
+    );
   background-attachment: fixed;
+}
+
+/* Stage: overhead spotlight vignette */
+[data-theme="stage"] body {
+  background-image:
+    radial-gradient(ellipse 70% 45% at 50% -5%, color-mix(in srgb, var(--accent-2) 16%, transparent), transparent 60%),
+    radial-gradient(circle at 50% 110%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 55%);
+  background-attachment: fixed;
+}
+
+/* Reusable surfaces so every card/field/button re-themes automatically */
+.card {
+  border: 1px solid var(--border);
+  background-color: var(--card);
+  border-radius: var(--radius);
+}
+
+.field {
+  width: 100%;
+  border: 1px solid var(--border);
+  background-color: transparent;
+  border-radius: var(--radius);
+  padding: 0.5rem 0.75rem;
+  color: var(--foreground);
+}
+
+.btn-primary {
+  border-radius: var(--radius);
+  padding: 0.5rem 1rem;
+  font-weight: 500;
+  color: white;
+  background-color: var(--accent);
+  transition: filter 0.15s ease;
+}
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.btn-primary:disabled {
+  opacity: 0.5;
+}
+
+.btn-icon {
+  font-size: 0.875rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.section-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  opacity: 0.6;
+}
+
+/* Manuscript: small-caps-ish italic serif labels */
+:root:not([data-theme="stage"]):not([data-theme="editor"]) .section-label {
+  font-family: var(--font-lora);
+  font-style: italic;
+  font-weight: 500;
+}
+
+/* Stage: playbill-style spaced gold caps */
+[data-theme="stage"] .section-label {
+  font-family: var(--font-playfair);
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+  color: var(--accent-2);
+  opacity: 0.9;
+}
+
+/* Editor: mono caps, Linear/Notion style */
+[data-theme="editor"] .section-label {
+  font-family: var(--font-geist-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.wordmark {
+  font-family: var(--font-display);
+  font-weight: 700;
+}
+:root:not([data-theme="stage"]):not([data-theme="editor"]) .wordmark {
+  font-style: italic;
+}
+[data-theme="stage"] .wordmark {
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  color: var(--accent-2);
+  font-weight: 600;
+}
+[data-theme="editor"] .wordmark {
+  letter-spacing: -0.01em;
 }
 
 @keyframes sentence-in {
@@ -81,4 +224,9 @@ body {
 
 .animate-pulse-soft {
   animation: pulse-soft 1.6s ease-in-out infinite;
+}
+
+/* Stage: current-turn spotlight glow */
+[data-theme="stage"] .turn-spotlight {
+  box-shadow: 0 0 0 1px var(--accent-2), 0 0 18px 2px color-mix(in srgb, var(--accent-2) 55%, transparent);
 }
