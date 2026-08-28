@@ -4,12 +4,12 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { savePlayerIdentity } from "@/lib/identity";
 import { ThemePicker } from "@/components/ThemePicker";
-import { MIN_TURN_SECONDS, MAX_TURN_SECONDS } from "@/lib/constants";
+import { TURN_SECONDS_OPTIONS } from "@/lib/constants";
 
 export default function HomePage() {
   const router = useRouter();
   const [name, setName] = useState("");
-  const [turnSeconds, setTurnSeconds] = useState(30);
+  const [turnSeconds, setTurnSeconds] = useState(TURN_SECONDS_OPTIONS[0]);
   const [joinCode, setJoinCode] = useState("");
   const [mode, setMode] = useState<"create" | "join">("create");
   const [loading, setLoading] = useState(false);
@@ -103,19 +103,27 @@ export default function HomePage() {
           />
 
           {mode === "create" ? (
-            <label className="block text-sm space-y-1">
-              <span className="opacity-60">
-                Seconds per turn (up to {MAX_TURN_SECONDS / 60} min)
-              </span>
-              <input
-                type="number"
-                min={MIN_TURN_SECONDS}
-                max={MAX_TURN_SECONDS}
-                className="field"
-                value={turnSeconds}
-                onChange={(e) => setTurnSeconds(Number(e.target.value))}
-              />
-            </label>
+            <div className="space-y-1.5">
+              <span className="text-sm opacity-60">Seconds per turn</span>
+              <div className="flex gap-1.5">
+                {TURN_SECONDS_OPTIONS.map((secs) => (
+                  <button
+                    key={secs}
+                    type="button"
+                    onClick={() => setTurnSeconds(secs)}
+                    className="flex-1 text-sm py-1.5 border"
+                    style={{
+                      borderRadius: "var(--radius)",
+                      borderColor: turnSeconds === secs ? "var(--accent)" : "var(--border)",
+                      backgroundColor: turnSeconds === secs ? "var(--accent)" : "transparent",
+                      color: turnSeconds === secs ? "white" : "var(--foreground)",
+                    }}
+                  >
+                    {secs / 60}m
+                  </button>
+                ))}
+              </div>
+            </div>
           ) : (
             <input
               className="field uppercase tracking-widest"
