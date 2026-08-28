@@ -2,7 +2,7 @@ import { getServiceClient } from "./supabaseServer";
 import { generateOpening, scoreSentence } from "./claude";
 import type { Player, Session } from "./types";
 
-import { COOLDOWN_SECONDS } from "./constants";
+import { COOLDOWN_SECONDS, MIN_TURN_SECONDS, MAX_TURN_SECONDS } from "./constants";
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I
 
@@ -49,6 +49,10 @@ function nextAlivePlayer(players: Player[], afterPlayerId: string): Player | nul
 export async function createSession(hostName: string, turnSeconds: number) {
   const db = getServiceClient();
 
+  // Clamp server-side - the UI enforces this range too, but requests can
+  // bypass the client, so the authoritative bound has to live here.
+  const seconds = Math.min(MAX_TURN_SECONDS, Math.max(MIN_TURN_SECONDS, Math.floor(turnSeconds) || 30));
+
   let code = randomCode();
   for (let attempt = 0; attempt < 5; attempt++) {
     const { data: existing } = await db
@@ -62,7 +66,7 @@ export async function createSession(hostName: string, turnSeconds: number) {
 
   const { data: session, error: sessionError } = await db
     .from("sessions")
-    .insert({ code, turn_seconds: turnSeconds })
+    .insert({ code, turn_seconds: seconds })
     .select("*")
     .single();
   if (sessionError || !session) throw new GameError(sessionError?.message ?? "Could not create session");
@@ -112,12 +116,15 @@ export async function startGame(code: string) {
   if (sentenceError) throw new GameError(sentenceError.message);
 
   const first = players[0];
-  const deadline = new Date(Date.now() + session.turn_seconds * 1000).toISOString();
+  // Cooldown before the first turn too, so everyone has time to read the
+  // opening before the timer starts - same as between every later turn.
+  const deadline = new Date(Date.now() + COOLDOWN_SECONDS * 1000).toISOString();
 
   const { error: updateError } = await db
     .from("sessions")
     .update({
       status: "active",
+      phase: "cooldown",
       current_turn_player_id: first.id,
       turn_number: 1,
       turn_deadline: deadline,
@@ -188,8 +195,14 @@ export async function submitSentence(code: string, playerId: string, content: st
   };
 
   if (alive.length <= 1) {
+    // Exactly one player is eliminated per resolution out of a pool that was
+    // >=2 alive, so alive.length should always land on 1, never 0. Assert it
+    // rather than silently finishing the game with a null winner.
+    if (alive.length === 0) {
+      throw new GameError("Elimination left no players alive - unreachable, game state is corrupted");
+    }
     patch.status = "finished";
-    patch.winner_player_id = alive[0]?.id ?? null;
+    patch.winner_player_id = alive[0].id;
     patch.current_turn_player_id = null;
     patch.turn_deadline = null;
   } else {
@@ -257,8 +270,11 @@ export async function checkTimeout(code: string) {
   const patch: Partial<Session> = {};
 
   if (alive.length <= 1) {
+    if (alive.length === 0) {
+      throw new GameError("Elimination left no players alive - unreachable, game state is corrupted");
+    }
     patch.status = "finished";
-    patch.winner_player_id = alive[0]?.id ?? null;
+    patch.winner_player_id = alive[0].id;
     patch.current_turn_player_id = null;
     patch.turn_deadline = null;
   } else {

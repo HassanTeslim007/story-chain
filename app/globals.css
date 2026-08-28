@@ -128,6 +128,22 @@ body {
   opacity: 0.5;
 }
 
+.btn-secondary {
+  border-radius: var(--radius);
+  padding: 0.5rem 1rem;
+  font-weight: 500;
+  color: var(--foreground);
+  background-color: transparent;
+  border: 1px solid var(--border);
+  transition: background-color 0.15s ease;
+}
+.btn-secondary:hover:not(:disabled) {
+  background-color: color-mix(in srgb, var(--foreground) 6%, transparent);
+}
+.btn-secondary:disabled {
+  opacity: 0.5;
+}
+
 .btn-icon {
   font-size: 0.875rem;
   padding: 0.25rem 0.5rem;

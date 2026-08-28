@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { savePlayerIdentity } from "@/lib/identity";
 import { ThemePicker } from "@/components/ThemePicker";
+import { MIN_TURN_SECONDS, MAX_TURN_SECONDS } from "@/lib/constants";
 
 export default function HomePage() {
   const router = useRouter();
@@ -103,11 +104,13 @@ export default function HomePage() {
 
           {mode === "create" ? (
             <label className="block text-sm space-y-1">
-              <span className="opacity-60">Seconds per turn</span>
+              <span className="opacity-60">
+                Seconds per turn (up to {MAX_TURN_SECONDS / 60} min)
+              </span>
               <input
                 type="number"
-                min={10}
-                max={120}
+                min={MIN_TURN_SECONDS}
+                max={MAX_TURN_SECONDS}
                 className="field"
                 value={turnSeconds}
                 onChange={(e) => setTurnSeconds(Number(e.target.value))}

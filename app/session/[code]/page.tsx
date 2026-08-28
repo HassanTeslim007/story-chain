@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getPlayerIdentity, savePlayerIdentity } from "@/lib/identity";
@@ -37,6 +38,7 @@ export default function SessionPage() {
   const [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [storyCopied, setStoryCopied] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   useEffect(() => {
@@ -231,6 +233,33 @@ export default function SessionPage() {
     setTimeout(() => setCopied(false), 1500);
   }
 
+  function storyText(): string {
+    const body = sentences
+      .filter((s) => !s.removed)
+      .sort((a, b) => a.turn_number - b.turn_number)
+      .map((s) => s.content)
+      .join(" ");
+    return `Story Chain — ${code}\n\n${body}\n`;
+  }
+
+  async function handleCopyStory() {
+    await navigator.clipboard.writeText(storyText());
+    setStoryCopied(true);
+    setTimeout(() => setStoryCopied(false), 1500);
+  }
+
+  function handleDownloadStory() {
+    const blob = new Blob([storyText()], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `story-chain-${code}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   if (loaded && !session) {
     return (
       <main className="flex-1 flex items-center justify-center p-6">
@@ -282,6 +311,9 @@ export default function SessionPage() {
       <header className="flex items-center justify-between">
         <h1 className="wordmark text-xl">Story Chain</h1>
         <div className="flex items-center gap-2">
+          <Link href="/" className="btn-icon" title="Back home">
+            🏠
+          </Link>
           <ThemeCycleButton />
           <button onClick={sounds.toggleMuted} className="btn-icon" title={sounds.muted ? "Unmute" : "Mute"}>
             {sounds.muted ? "🔇" : "🔊"}
@@ -346,12 +378,25 @@ export default function SessionPage() {
 
       {session.status !== "lobby" && (
         <section className="space-y-4">
-          <div className="card p-4 leading-relaxed" style={{ fontFamily: "var(--font-story)" }}>
-            {storySentences.map((s, i) => (
-              <span key={s.id} className={i === storySentences.length - 1 ? "animate-sentence-in" : ""}>
-                {s.content}{" "}
-              </span>
-            ))}
+          <div className="card p-4 space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="section-label">The story</h2>
+              <div className="flex items-center gap-1.5">
+                <button onClick={handleCopyStory} className="btn-icon" title="Copy story text">
+                  {storyCopied ? "Copied!" : "📋 Copy"}
+                </button>
+                <button onClick={handleDownloadStory} className="btn-icon" title="Download as .txt">
+                  ⬇ Download
+                </button>
+              </div>
+            </div>
+            <div className="leading-relaxed" style={{ fontFamily: "var(--font-story)" }}>
+              {storySentences.map((s, i) => (
+                <span key={s.id} className={i === storySentences.length - 1 ? "animate-sentence-in" : ""}>
+                  {s.content}{" "}
+                </span>
+              ))}
+            </div>
           </div>
 
           {lastTurn && (
@@ -442,11 +487,16 @@ export default function SessionPage() {
             <div className="text-center space-y-3 py-4">
               <p className="wordmark text-2xl">{winner ? `${winner.name} wins!` : "Game over"}</p>
               <p className="text-sm opacity-60">Last writer standing.</p>
-              {me && (
-                <button onClick={handlePlayAgain} disabled={rematchBusy} className="btn-primary">
-                  {rematchBusy ? "Starting..." : "Play again"}
-                </button>
-              )}
+              <div className="flex items-center justify-center gap-2">
+                {me && (
+                  <button onClick={handlePlayAgain} disabled={rematchBusy} className="btn-primary">
+                    {rematchBusy ? "Starting..." : "Play again"}
+                  </button>
+                )}
+                <Link href="/" className="btn-secondary">
+                  Home
+                </Link>
+              </div>
             </div>
           )}
         </section>
