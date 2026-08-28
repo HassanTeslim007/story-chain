@@ -1,8 +1,13 @@
 import { getServiceClient } from "./supabaseServer";
 import { generateOpening, scoreSentence } from "./claude";
-import type { Player, Session } from "./types";
-
-import { COOLDOWN_SECONDS, MIN_TURN_SECONDS, MAX_TURN_SECONDS } from "./constants";
+import type { Player, Session, SessionMode } from "./types";
+import {
+  COOLDOWN_SECONDS,
+  MIN_TURN_SECONDS,
+  MAX_TURN_SECONDS,
+  ELIMINATION_SAFETY_TURN_CAP,
+  MARATHON_TURN_OPTIONS,
+} from "./constants";
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I
 
@@ -46,12 +51,86 @@ function nextAlivePlayer(players: Player[], afterPlayerId: string): Player | nul
   return ordered.find((p) => p.is_alive) ?? null;
 }
 
-export async function createSession(hostName: string, turnSeconds: number) {
+// Sum of each candidate's own (non-removed, scored) sentences, for the
+// turn-cap ending. Ties go to whichever candidate appears earliest in
+// candidateIds - callers pass players in turn_order, so ties favor whoever
+// joined first.
+async function topScorer(sessionId: string, candidateIds: string[]): Promise<string> {
+  const db = getServiceClient();
+  const { data, error } = await db
+    .from("sentences")
+    .select("player_id, score")
+    .eq("session_id", sessionId)
+    .eq("removed", false)
+    .not("score", "is", null);
+  if (error) throw new GameError(error.message);
+
+  const totals = new Map<string, number>(candidateIds.map((id) => [id, 0]));
+  for (const row of data ?? []) {
+    if (row.player_id && totals.has(row.player_id)) {
+      totals.set(row.player_id, totals.get(row.player_id)! + (row.score as number));
+    }
+  }
+  return candidateIds.reduce((best, id) => (totals.get(id)! > totals.get(best)! ? id : best));
+}
+
+// Decides whether the game ends given this turn's alive-player set, or
+// returns null to continue to the next turn. Two ways to end: elimination
+// reduced the field to one player, or every remaining player has hit the
+// turn cap (elimination mode's safety net, or marathon's actual game
+// length) - in which case the highest total individual score wins.
+async function resolveEnding(session: Session, alive: Player[]): Promise<Partial<Session> | null> {
+  if (alive.length === 0) {
+    // Exactly one player is removed per resolution out of a pool that was
+    // >=2 alive, so this should be unreachable - assert rather than
+    // silently finishing the game with a null winner.
+    throw new GameError("Elimination left no players alive - unreachable, game state is corrupted");
+  }
+  if (alive.length === 1) {
+    return {
+      status: "finished",
+      end_reason: "elimination",
+      winner_player_id: alive[0].id,
+      current_turn_player_id: null,
+      turn_deadline: null,
+      phase: "turn",
+    };
+  }
+  if (alive.every((p) => p.turns_taken >= session.max_turns_per_player)) {
+    const winnerId = await topScorer(
+      session.id,
+      alive.map((p) => p.id),
+    );
+    return {
+      status: "finished",
+      end_reason: "turn_cap",
+      winner_player_id: winnerId,
+      current_turn_player_id: null,
+      turn_deadline: null,
+      phase: "turn",
+    };
+  }
+  return null;
+}
+
+export async function createSession(
+  hostName: string,
+  turnSeconds: number,
+  mode: SessionMode = "elimination",
+  maxTurnsPerPlayer?: number,
+) {
   const db = getServiceClient();
 
   // Clamp server-side - the UI enforces this range too, but requests can
   // bypass the client, so the authoritative bound has to live here.
   const seconds = Math.min(MAX_TURN_SECONDS, Math.max(MIN_TURN_SECONDS, Math.floor(turnSeconds) || 30));
+  const resolvedMode: SessionMode = mode === "marathon" ? "marathon" : "elimination";
+  const maxTurns =
+    resolvedMode === "marathon"
+      ? MARATHON_TURN_OPTIONS.includes(maxTurnsPerPlayer ?? -1)
+        ? (maxTurnsPerPlayer as number)
+        : MARATHON_TURN_OPTIONS[0]
+      : ELIMINATION_SAFETY_TURN_CAP;
 
   let code = randomCode();
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -66,7 +145,7 @@ export async function createSession(hostName: string, turnSeconds: number) {
 
   const { data: session, error: sessionError } = await db
     .from("sessions")
-    .insert({ code, turn_seconds: seconds })
+    .insert({ code, turn_seconds: seconds, mode: resolvedMode, max_turns_per_player: maxTurns })
     .select("*")
     .single();
   if (sessionError || !session) throw new GameError(sessionError?.message ?? "Could not create session");
@@ -173,45 +252,39 @@ export async function submitSentence(code: string, playerId: string, content: st
   if (insertError || !inserted) throw new GameError(insertError?.message ?? "Could not save sentence");
 
   const players = await getPlayers(session.id);
+  const submitter = players.find((p) => p.id === playerId)!;
+  submitter.turns_taken += 1;
+  await db.from("players").update({ turns_taken: submitter.turns_taken }).eq("id", playerId);
+
   const newTotal = session.total_score + score;
   const newCount = session.score_count + 1;
   const avg = newTotal / newCount;
-  const eliminated = avg < 50;
+  // Marathon mode has no score-based elimination - the turn cap is its only
+  // ending, handled by resolveEnding below.
+  const eliminated = session.mode === "elimination" && avg < 50;
 
   if (eliminated) {
     await db.from("sentences").update({ removed: true }).eq("id", inserted.id);
     await db.from("players").update({ is_alive: false }).eq("id", playerId);
-    players.find((p) => p.id === playerId)!.is_alive = false;
+    submitter.is_alive = false;
   }
 
   const finalTotal = eliminated ? session.total_score : newTotal;
   const finalCount = eliminated ? session.score_count : newCount;
 
   const alive = players.filter((p) => p.is_alive);
+  const ending = await resolveEnding(session, alive);
 
   const patch: Partial<Session> = {
     total_score: finalTotal,
     score_count: finalCount,
+    ...(ending ?? {
+      current_turn_player_id: nextAlivePlayer(players, playerId)!.id,
+      turn_number: session.turn_number + 1,
+      phase: "cooldown",
+      turn_deadline: new Date(Date.now() + COOLDOWN_SECONDS * 1000).toISOString(),
+    }),
   };
-
-  if (alive.length <= 1) {
-    // Exactly one player is eliminated per resolution out of a pool that was
-    // >=2 alive, so alive.length should always land on 1, never 0. Assert it
-    // rather than silently finishing the game with a null winner.
-    if (alive.length === 0) {
-      throw new GameError("Elimination left no players alive - unreachable, game state is corrupted");
-    }
-    patch.status = "finished";
-    patch.winner_player_id = alive[0].id;
-    patch.current_turn_player_id = null;
-    patch.turn_deadline = null;
-  } else {
-    const next = nextAlivePlayer(players, playerId);
-    patch.current_turn_player_id = next!.id;
-    patch.turn_number = session.turn_number + 1;
-    patch.phase = "cooldown";
-    patch.turn_deadline = new Date(Date.now() + COOLDOWN_SECONDS * 1000).toISOString();
-  }
 
   // Guarded update: only apply if this turn hasn't already been resolved
   // by a concurrent timeout call.
@@ -261,29 +334,24 @@ export async function checkTimeout(code: string) {
     return { advanced: (updatedRows?.length ?? 0) > 0 };
   }
 
+  // A missed turn always eliminates, in both modes - it's an anti-stall
+  // safeguard against an AFK player, distinct from marathon's "no scoring
+  // pressure" pitch (which only covers the avg<50 elimination check above).
   const expiredPlayerId = session.current_turn_player_id;
   const players = await getPlayers(session.id);
   const updatedPlayers = players.map((p) =>
     p.id === expiredPlayerId ? { ...p, is_alive: false } : p,
   );
   const alive = updatedPlayers.filter((p) => p.is_alive);
-  const patch: Partial<Session> = {};
+  const ending = await resolveEnding(session, alive);
 
-  if (alive.length <= 1) {
-    if (alive.length === 0) {
-      throw new GameError("Elimination left no players alive - unreachable, game state is corrupted");
-    }
-    patch.status = "finished";
-    patch.winner_player_id = alive[0].id;
-    patch.current_turn_player_id = null;
-    patch.turn_deadline = null;
-  } else {
-    const next = nextAlivePlayer(updatedPlayers, expiredPlayerId);
-    patch.current_turn_player_id = next!.id;
-    patch.turn_number = session.turn_number + 1;
-    patch.phase = "cooldown";
-    patch.turn_deadline = new Date(Date.now() + COOLDOWN_SECONDS * 1000).toISOString();
-  }
+  const patch: Partial<Session> =
+    ending ?? {
+      current_turn_player_id: nextAlivePlayer(updatedPlayers, expiredPlayerId)!.id,
+      turn_number: session.turn_number + 1,
+      phase: "cooldown",
+      turn_deadline: new Date(Date.now() + COOLDOWN_SECONDS * 1000).toISOString(),
+    };
 
   // Guarded update: atomically claim the timeout before touching player
   // state, so a submit that lands at the same instant can't be undone by us.

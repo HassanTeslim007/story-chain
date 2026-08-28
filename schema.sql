@@ -7,6 +7,9 @@ create table sessions (
   code text unique not null,               -- short join code, e.g. 6 chars
   status text not null default 'lobby',    -- lobby | active | finished
   phase text not null default 'turn' check (phase in ('turn', 'cooldown')),
+  mode text not null default 'elimination' check (mode in ('elimination', 'marathon')),
+  max_turns_per_player int not null default 12, -- safety cap (elimination) or the whole point (marathon)
+  end_reason text check (end_reason in ('elimination', 'turn_cap')),
   turn_seconds int not null default 30,
   current_turn_player_id uuid,
   turn_number int not null default 0,
@@ -23,6 +26,7 @@ create table players (
   name text not null,
   turn_order int not null,
   is_alive boolean not null default true,
+  turns_taken int not null default 0,      -- completed (submitted) turns, for the turn cap
   joined_at timestamptz not null default now()
 );
 

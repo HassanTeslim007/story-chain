@@ -214,7 +214,12 @@ export default function SessionPage() {
       const res = await fetch("/api/session/create", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ hostName: me.name, turnSeconds: session!.turn_seconds }),
+        body: JSON.stringify({
+          hostName: me.name,
+          turnSeconds: session!.turn_seconds,
+          mode: session!.mode,
+          maxTurnsPerPlayer: session!.max_turns_per_player,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
@@ -304,6 +309,20 @@ export default function SessionPage() {
     return players.find((p) => p.id === id)?.name ?? "Unknown";
   }
 
+  function totalScoreFor(id: string): number {
+    return sentences
+      .filter((s) => s.player_id === id && !s.removed && s.score !== null)
+      .reduce((sum, s) => sum + (s.score as number), 0);
+  }
+
+  // In marathon mode nobody is eliminated, so every alive player advances in
+  // lockstep - the lowest turns_taken among them is the round currently in
+  // progress (1-indexed, capped at the game length).
+  const round =
+    session.mode === "marathon" && players.length > 0
+      ? Math.min(session.max_turns_per_player, Math.min(...players.map((p) => p.turns_taken)) + 1)
+      : null;
+
   return (
     <main className="flex-1 max-w-2xl w-full mx-auto p-6 space-y-6">
       <Toasts toasts={toasts} />
@@ -340,6 +359,7 @@ export default function SessionPage() {
       <section className="card p-4 space-y-2">
         <h2 className="section-label">
           Players {avg !== null && `· avg score ${avg.toFixed(1)}`}
+          {round !== null && ` · round ${round}/${session.max_turns_per_player}`}
         </h2>
         <ul className="flex flex-wrap gap-2">
           {players.map((p) => (
@@ -486,7 +506,29 @@ export default function SessionPage() {
           {session.status === "finished" && (
             <div className="text-center space-y-3 py-4">
               <p className="wordmark text-2xl">{winner ? `${winner.name} wins!` : "Game over"}</p>
-              <p className="text-sm opacity-60">Last writer standing.</p>
+              <p className="text-sm opacity-60">
+                {session.end_reason === "turn_cap"
+                  ? `Highest score after ${session.max_turns_per_player} turns each.`
+                  : "Last writer standing."}
+              </p>
+
+              {session.end_reason === "turn_cap" && (
+                <div className="card p-4 space-y-2 text-left max-w-xs mx-auto">
+                  <h2 className="section-label">Final scores</h2>
+                  {[...players]
+                    .map((p) => ({ p, total: totalScoreFor(p.id) }))
+                    .sort((a, b) => b.total - a.total)
+                    .map(({ p, total }, i) => (
+                      <div key={p.id} className="flex items-center gap-2 text-sm">
+                        <span className="w-4 opacity-50">{i + 1}</span>
+                        <Avatar name={p.name} size={20} faded={!p.is_alive} />
+                        <span className={p.id === session.winner_player_id ? "font-semibold" : ""}>{p.name}</span>
+                        <span className="ml-auto font-mono">{total}</span>
+                      </div>
+                    ))}
+                </div>
+              )}
+
               <div className="flex items-center justify-center gap-2">
                 {me && (
                   <button onClick={handlePlayAgain} disabled={rematchBusy} className="btn-primary">

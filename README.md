@@ -1,10 +1,21 @@
 # Story Chain
 
 AI-judged collaborative story game. Players take turns adding one sentence to a
-story; Claude scores each sentence 0-100 for coherence, creativity, and
-grammar. If a player's sentence drags the game's running average score below
-50, they're eliminated and their sentence is removed. Last writer standing
-wins.
+story; the judge model scores each sentence 0-100 for coherence, creativity,
+and grammar. Two modes, chosen when the game is created:
+
+- **Elimination** — sudden death. If a player's sentence drags the game's
+  running average score below 50, they're eliminated and their sentence is
+  removed. Last writer standing wins. A generous turn cap
+  (`ELIMINATION_SAFETY_TURN_CAP` in `lib/constants.ts`) is a safety net in
+  case nobody ever trips the average — if it's reached with more than one
+  player left, the game ends and ranks by each player's own total score.
+- **Marathon** — no elimination. Everyone writes the same number of turns
+  (host-chosen), then the game ends and the highest total individual score
+  wins.
+
+In both modes, missing your turn's deadline always eliminates you — that's an
+anti-stall rule, not scoring pressure, so it applies in Marathon too.
 
 ## Setup
 
@@ -46,9 +57,15 @@ wins.
   resolved.
 - **Average score / elimination** — `sessions.total_score` /
   `sessions.score_count` track a running average across all *currently
-  counted* sentences. If a new score drops the average below 50, that
-  player's sentence is marked `removed` and excluded from the running total
-  going forward (as if it never happened), and the player is eliminated.
+  counted* sentences. In Elimination mode, if a new score drops the average
+  below 50, that player's sentence is marked `removed` and excluded from the
+  running total going forward (as if it never happened), and the player is
+  eliminated. Marathon mode never does this — it only ends by turn cap.
+- **Turn cap / game end** — `sessions.max_turns_per_player` and each player's
+  `turns_taken` decide when a non-elimination ending fires: once every alive
+  player has taken that many turns, `resolveEnding` in `lib/game.ts` ends the
+  game with `end_reason: 'turn_cap'` and ranks by summed individual sentence
+  scores. Ending by a single survivor instead sets `end_reason: 'elimination'`.
 
 ## Known rough edges (fine for a prototype, worth hardening later)
 

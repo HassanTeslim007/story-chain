@@ -8,3 +8,13 @@ export const MAX_TURN_SECONDS = 300; // 5 minutes
 
 // Chip options offered on the home page: 1-5 minutes.
 export const TURN_SECONDS_OPTIONS = [60, 120, 180, 240, 300];
+
+// Elimination mode has no host-facing turn cap - this is just a safety net
+// so a game between strong writers who never trip the avg<50 line can't run
+// forever. Generous on purpose; if it's ever reached, ranking falls back to
+// each player's own total score.
+export const ELIMINATION_SAFETY_TURN_CAP = 15;
+
+// Marathon mode has no elimination at all - the turn cap IS the game length,
+// so it's the host's headline choice (rounds per player).
+export const MARATHON_TURN_OPTIONS = [4, 6, 8, 10];
