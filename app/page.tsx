@@ -133,18 +133,18 @@ export default function HomePage() {
   return (
     <main className="flex-1 flex items-center justify-center p-6 lg:p-12">
       <div className="w-full max-w-sm lg:max-w-6xl lg:grid lg:grid-cols-2 lg:gap-16 lg:items-center">
-        <div className="space-y-6">
-          <div className="text-center lg:text-left space-y-2">
+        <div className="space-y-8">
+          <div className="text-center lg:text-left space-y-3">
             <h1 className="wordmark text-3xl lg:text-5xl">Story Chain</h1>
             <p className="text-sm lg:text-base opacity-60">AI judges every line, sentence by sentence.</p>
-            <ul className="text-xs lg:text-sm opacity-60 space-y-1 pt-2 inline-block text-left">
+            <ul className="text-xs lg:text-sm opacity-60 space-y-1.5 pt-2 inline-block text-left">
               <li>✒️ The judge scores every line for coherence, creativity, and grammar</li>
               <li>⚔️ Elimination or Marathon — sudden death, or ranked by total score</li>
               <li>🔄 Live multiplayer — everyone sees every turn as it lands</li>
             </ul>
           </div>
 
-          <div className="space-y-1.5">
+          <div className="space-y-2.5">
             <p className="section-label">Theme</p>
             <ThemePicker />
           </div>
@@ -169,7 +169,7 @@ export default function HomePage() {
             </button>
           </div>
 
-          <form onSubmit={mode === "create" ? handleCreate : handleJoin} className="space-y-3">
+          <form onSubmit={mode === "create" ? handleCreate : handleJoin} className="space-y-5">
             <input
               className="field"
               placeholder="Your name"
@@ -180,7 +180,7 @@ export default function HomePage() {
 
             {mode === "create" ? (
               <>
-                <div className="space-y-1.5">
+                <div className="space-y-2.5">
                   <span className="text-sm opacity-60">Mode</span>
                   <Chips
                     options={["elimination", "marathon"] as const}
@@ -195,7 +195,7 @@ export default function HomePage() {
                   </p>
                 </div>
 
-                <div className="space-y-1.5">
+                <div className="space-y-2.5">
                   <span className="text-sm opacity-60">Minutes per turn</span>
                   <Chips
                     options={TURN_SECONDS_OPTIONS}
@@ -206,7 +206,7 @@ export default function HomePage() {
                 </div>
 
                 {gameMode === "marathon" && (
-                  <div className="space-y-1.5">
+                  <div className="space-y-2.5">
                     <span className="text-sm opacity-60">Turns per player</span>
                     <Chips
                       options={MARATHON_TURN_OPTIONS}
