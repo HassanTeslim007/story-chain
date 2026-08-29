@@ -7,6 +7,7 @@ import {
   MAX_TURN_SECONDS,
   ELIMINATION_SAFETY_TURN_CAP,
   MARATHON_TURN_OPTIONS,
+  MAX_SENTENCE_LENGTH,
 } from "./constants";
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I
@@ -225,6 +226,9 @@ export async function submitSentence(code: string, playerId: string, content: st
   }
   const trimmed = content.trim();
   if (!trimmed) throw new GameError("Sentence cannot be empty");
+  if (trimmed.length > MAX_SENTENCE_LENGTH) {
+    throw new GameError(`Keep it to one sentence - ${MAX_SENTENCE_LENGTH} characters max`);
+  }
 
   const { data: sentenceRows, error: storyError } = await db
     .from("sentences")
@@ -251,10 +255,14 @@ export async function submitSentence(code: string, playerId: string, content: st
     .single();
   if (insertError || !inserted) throw new GameError(insertError?.message ?? "Could not save sentence");
 
+  // Compute this turn's effect on player state in memory only for now -
+  // don't write turns_taken/is_alive until the guarded session update below
+  // confirms this turn actually stuck. Otherwise a concurrent timeout that
+  // wins the race leaves this player over-counted or wrongly eliminated,
+  // with only the sentence rolled back.
   const players = await getPlayers(session.id);
   const submitter = players.find((p) => p.id === playerId)!;
   submitter.turns_taken += 1;
-  await db.from("players").update({ turns_taken: submitter.turns_taken }).eq("id", playerId);
 
   const newTotal = session.total_score + score;
   const newCount = session.score_count + 1;
@@ -262,12 +270,7 @@ export async function submitSentence(code: string, playerId: string, content: st
   // Marathon mode has no score-based elimination - the turn cap is its only
   // ending, handled by resolveEnding below.
   const eliminated = session.mode === "elimination" && avg < 50;
-
-  if (eliminated) {
-    await db.from("sentences").update({ removed: true }).eq("id", inserted.id);
-    await db.from("players").update({ is_alive: false }).eq("id", playerId);
-    submitter.is_alive = false;
-  }
+  if (eliminated) submitter.is_alive = false;
 
   const finalTotal = eliminated ? session.total_score : newTotal;
   const finalCount = eliminated ? session.score_count : newCount;
@@ -300,8 +303,17 @@ export async function submitSentence(code: string, playerId: string, content: st
   if (!updatedRows || updatedRows.length === 0) {
     // Someone else's timeout check already advanced this turn - undo our
     // score's effect on the story so it doesn't linger as a phantom entry.
+    // turns_taken/is_alive were never written, so there's nothing else to
+    // roll back.
     await db.from("sentences").update({ removed: true }).eq("id", inserted.id);
     throw new GameError("Turn already expired");
+  }
+
+  // Session update stuck - now it's safe to persist the player-side effects.
+  await db.from("players").update({ turns_taken: submitter.turns_taken }).eq("id", playerId);
+  if (eliminated) {
+    await db.from("sentences").update({ removed: true }).eq("id", inserted.id);
+    await db.from("players").update({ is_alive: false }).eq("id", playerId);
   }
 
   return { score, reasoning, eliminated };

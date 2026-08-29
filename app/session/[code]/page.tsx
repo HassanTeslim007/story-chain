@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getPlayerIdentity, savePlayerIdentity } from "@/lib/identity";
-import { COOLDOWN_SECONDS } from "@/lib/constants";
+import { COOLDOWN_SECONDS, MAX_SENTENCE_LENGTH } from "@/lib/constants";
 import { useGameSounds } from "@/lib/useGameSounds";
 import type { Player, Sentence, Session } from "@/lib/types";
 import Avatar from "@/components/Avatar";
@@ -13,12 +13,22 @@ import CountdownBar from "@/components/CountdownBar";
 import ScoreChart from "@/components/ScoreChart";
 import Toasts, { type Toast } from "@/components/Toasts";
 import { ThemeCycleButton } from "@/components/ThemePicker";
+import QRCode from "@/components/QRCode";
 
 function scoreColor(score: number | null): string {
   if (score === null) return "text-neutral-500";
   if (score >= 70) return "text-emerald-500";
   if (score >= 50) return "text-amber-500";
   return "text-red-500";
+}
+
+// The running average is what actually decides elimination (avg < 50), so
+// its danger zone is wider than a single sentence's: still "close to 50"
+// well above the line, not just below it.
+function avgStatusColor(avg: number): { text: string; border: string } {
+  if (avg < 60) return { text: "text-red-500", border: "#ef4444" };
+  if (avg < 75) return { text: "text-amber-500", border: "#f59e0b" };
+  return { text: "text-emerald-500", border: "#10b981" };
 }
 
 export default function SessionPage() {
@@ -37,8 +47,15 @@ export default function SessionPage() {
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(false);
+  const [judging, setJudging] = useState(false);
   const [copied, setCopied] = useState(false);
   const [storyCopied, setStoryCopied] = useState(false);
+  // Set post-mount only (empty during SSR) so the server and first client
+  // render match - window.location isn't available during SSR, and filling
+  // it in immediately would make the QR code's encoded path mismatch on
+  // hydration.
+  const [joinUrl, setJoinUrl] = useState("");
+  useEffect(() => setJoinUrl(window.location.href), []);
   const [toasts, setToasts] = useState<Toast[]>([]);
 
   useEffect(() => {
@@ -134,6 +151,15 @@ export default function SessionPage() {
   const isMyTurn = session?.status === "active" && session.phase === "turn" && session.current_turn_player_id === playerId;
   const isNextUpMe = session?.status === "active" && session.phase === "cooldown" && session.current_turn_player_id === playerId;
 
+  // The story box scrolls internally now (fixed height) - keep it pinned to
+  // the newest sentence, otherwise a new turn could land below the fold and
+  // go unnoticed by anyone not already scrolled to the bottom.
+  const storyBoxRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = storyBoxRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [sentences.length]);
+
   const prevIsMyTurn = useRef(false);
   useEffect(() => {
     if (isMyTurn && !prevIsMyTurn.current) sounds.play("turn");
@@ -190,19 +216,24 @@ export default function SessionPage() {
     e.preventDefault();
     if (!playerId) return;
     setBusy(true);
+    setJudging(true);
     setError(null);
-    const res = await fetch(`/api/session/${code}/submit`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ playerId, content: draft }),
-    });
-    const data = await res.json();
-    setBusy(false);
-    if (!res.ok) {
-      setError(data.error);
-      return;
+    try {
+      const res = await fetch(`/api/session/${code}/submit`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ playerId, content: draft }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error);
+        return;
+      }
+      setDraft("");
+    } finally {
+      setBusy(false);
+      setJudging(false);
     }
-    setDraft("");
   }
 
   const [rematchBusy, setRematchBusy] = useState(false);
@@ -295,6 +326,7 @@ export default function SessionPage() {
 
   const storySentences = sentences.filter((s) => !s.removed);
   const avg = session.score_count > 0 ? session.total_score / session.score_count : null;
+  const avgColor = avg !== null ? avgStatusColor(avg) : null;
   const currentPlayer = players.find((p) => p.id === session.current_turn_player_id);
   const winner = players.find((p) => p.id === session.winner_player_id);
   const lastTurn = [...sentences]
@@ -324,12 +356,33 @@ export default function SessionPage() {
       : null;
 
   return (
-    <main className="flex-1 max-w-2xl w-full mx-auto p-6 space-y-6">
+    <main
+      className={`flex-1 w-full mx-auto p-6 lg:p-8 space-y-6 max-w-2xl lg:max-w-[1560px] ${
+        isMyTurn ? "pb-32" : ""
+      }`}
+    >
       <Toasts toasts={toasts} />
 
-      <header className="flex items-center justify-between">
+      {/* Header/join/players/lobby stay at reading width even on desktop -
+          only the gameplay grid below uses the wider container, for its
+          chart/verdict side columns. */}
+      <div className="max-w-2xl mx-auto w-full space-y-6">
+      {/* Sticky so the running average is always visible without scrolling
+          up, no matter how far down the story/chart/verdict you've scrolled. */}
+      <header
+        className="sticky top-0 z-30 -mt-6 lg:-mt-8 pt-6 lg:pt-8 pb-3 flex items-center justify-between"
+        style={{
+          backgroundColor: "color-mix(in srgb, var(--background) 90%, transparent)",
+          backdropFilter: "blur(8px)",
+        }}
+      >
         <h1 className="wordmark text-xl">Story Chain</h1>
         <div className="flex items-center gap-2">
+          {avg !== null && avgColor && (
+            <span className={`btn-icon font-mono font-bold ${avgColor.text}`} title="Running average">
+              {avg.toFixed(1)}
+            </span>
+          )}
           <Link href="/" className="btn-icon" title="Back home">
             🏠
           </Link>
@@ -385,166 +438,237 @@ export default function SessionPage() {
 
       {session.status === "lobby" && (
         <section className="text-center space-y-3">
-          <p className="text-sm opacity-60">
-            Share code <span className="font-mono font-bold">{code}</span> with friends.
-          </p>
+          <p className="text-sm opacity-60">Share the code or scan to join.</p>
+          <p className="marquee-code text-2xl font-mono font-bold inline-block">{code}</p>
+          {joinUrl && (
+            <div className="flex justify-center">
+              <QRCode value={joinUrl} />
+            </div>
+          )}
           {me && (
-            <button onClick={handleStart} disabled={busy || players.length < 2} className="btn-primary">
-              {players.length < 2 ? "Waiting for players..." : "Start game"}
-            </button>
+            <div>
+              <button onClick={handleStart} disabled={busy || players.length < 2} className="btn-primary">
+                {players.length < 2 ? "Waiting for players..." : "Start game"}
+              </button>
+            </div>
           )}
         </section>
       )}
+      </div>
 
       {session.status !== "lobby" && (
-        <section className="space-y-4">
-          <div className="card p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <h2 className="section-label">The story</h2>
-              <div className="flex items-center gap-1.5">
-                <button onClick={handleCopyStory} className="btn-icon" title="Copy story text">
-                  {storyCopied ? "Copied!" : "📋 Copy"}
-                </button>
-                <button onClick={handleDownloadStory} className="btn-icon" title="Download as .txt">
-                  ⬇ Download
-                </button>
-              </div>
-            </div>
-            <div className="leading-relaxed" style={{ fontFamily: "var(--font-story)" }}>
-              {storySentences.map((s, i) => (
-                <span key={s.id} className={i === storySentences.length - 1 ? "animate-sentence-in" : ""}>
-                  {s.content}{" "}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          {lastTurn && (
-            <div className="card p-4 space-y-1">
-              <h2 className="section-label">Judge&apos;s verdict</h2>
-              <div className="flex items-center gap-2">
-                <Avatar name={lastTurnPlayer?.name ?? "?"} size={22} />
-                <span className="text-sm font-medium">{lastTurnPlayer?.name ?? "Unknown"}</span>
-                <span className={`ml-auto text-lg font-bold ${scoreColor(lastTurn.score)}`}>{lastTurn.score}</span>
-              </div>
-              {lastTurn.reasoning && <p className="text-sm opacity-70">{lastTurn.reasoning}</p>}
-              {lastTurn.removed && (
-                <p className="text-xs text-red-500 font-medium">
-                  Average dropped below 50 — this sentence was removed and {lastTurnPlayer?.name ?? "the player"} is
-                  eliminated.
-                </p>
-              )}
-            </div>
-          )}
-
+        // Three columns on desktop (chart | story | verdict) so the wide
+        // viewport isn't just empty margin; a plain single-column stack on
+        // mobile. Each side column is pinned to its grid line explicitly
+        // (col-start-*) rather than relying on auto-placement, so if one
+        // side has no content yet, the other doesn't shift into its slot.
+        <div className="flex flex-col gap-5 lg:grid lg:grid-cols-[280px_minmax(0,50rem)_280px] lg:gap-10 lg:items-start">
           {sentences.some((s) => s.turn_number > 0) && (
-            <div className="card p-4">
-              <h2 className="section-label mb-2">Average score over time</h2>
-              <ScoreChart sentences={sentences} playerName={playerName} />
-            </div>
-          )}
-
-          {eliminatedPlayers.length > 0 && (
-            <div className="card p-4 space-y-3">
-              <h2 className="section-label">Eliminated</h2>
-              {eliminatedPlayers.map((p) => {
-                const finalSentence = sentences.find((s) => s.player_id === p.id && s.removed);
-                return (
-                  <div key={p.id} className="flex gap-2">
-                    <Avatar name={p.name} size={22} faded />
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium">{p.name}</p>
-                      {finalSentence ? (
-                        <>
-                          <p className="text-sm opacity-70 italic">&ldquo;{finalSentence.content}&rdquo;</p>
-                          <p className={`text-xs font-medium ${scoreColor(finalSentence.score)}`}>
-                            scored {finalSentence.score}
-                          </p>
-                        </>
-                      ) : (
-                        <p className="text-sm opacity-70">Ran out of time.</p>
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-
-          {session.status === "active" && (
-            <CountdownBar
-              secondsLeft={secondsLeft ?? 0}
-              totalSeconds={session.phase === "cooldown" ? COOLDOWN_SECONDS : session.turn_seconds}
-              label={
-                session.phase === "cooldown"
-                  ? isNextUpMe
-                    ? "You're up next"
-                    : `${currentPlayer?.name ?? "..."} is up next`
-                  : isMyTurn
-                    ? "Your turn"
-                    : `Waiting on ${currentPlayer?.name ?? "..."}`
-              }
-            />
-          )}
-
-          {isMyTurn && (
-            <form onSubmit={handleSubmit} className="space-y-2">
-              <textarea
-                className="field"
-                rows={3}
-                placeholder="Continue the story..."
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                required
-              />
-              <button type="submit" disabled={busy} className="btn-primary w-full">
-                Submit sentence
-              </button>
-            </form>
-          )}
-
-          {session.status === "finished" && (
-            <div className="text-center space-y-3 py-4">
-              <p className="wordmark text-2xl">{winner ? `${winner.name} wins!` : "Game over"}</p>
-              <p className="text-sm opacity-60">
-                {session.end_reason === "turn_cap"
-                  ? `Highest score after ${session.max_turns_per_player} turns each.`
-                  : "Last writer standing."}
-              </p>
-
-              {session.end_reason === "turn_cap" && (
-                <div className="card p-4 space-y-2 text-left max-w-xs mx-auto">
-                  <h2 className="section-label">Final scores</h2>
-                  {[...players]
-                    .map((p) => ({ p, total: totalScoreFor(p.id) }))
-                    .sort((a, b) => b.total - a.total)
-                    .map(({ p, total }, i) => (
-                      <div key={p.id} className="flex items-center gap-2 text-sm">
-                        <span className="w-4 opacity-50">{i + 1}</span>
-                        <Avatar name={p.name} size={20} faded={!p.is_alive} />
-                        <span className={p.id === session.winner_player_id ? "font-semibold" : ""}>{p.name}</span>
-                        <span className="ml-auto font-mono">{total}</span>
-                      </div>
-                    ))}
+            <aside className="order-2 lg:order-none lg:col-start-1 lg:row-start-1 lg:-rotate-1 hover:lg:rotate-0 transition-transform duration-300">
+              <div className="space-y-5">
+                <div className="card p-4">
+                  <h2 className="section-label mb-2">Average score over time</h2>
+                  <ScoreChart sentences={sentences} playerName={playerName} />
                 </div>
-              )}
 
-              <div className="flex items-center justify-center gap-2">
-                {me && (
-                  <button onClick={handlePlayAgain} disabled={rematchBusy} className="btn-primary">
-                    {rematchBusy ? "Starting..." : "Play again"}
-                  </button>
+                {eliminatedPlayers.length > 0 && (
+                  <div className="card p-4 space-y-3">
+                    <h2 className="section-label">Eliminated</h2>
+                    {eliminatedPlayers.map((p) => {
+                      const finalSentence = sentences.find((s) => s.player_id === p.id && s.removed);
+                      return (
+                        <div key={p.id} className="flex gap-2">
+                          <Avatar name={p.name} size={22} faded />
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium">{p.name}</p>
+                            {finalSentence ? (
+                              <>
+                                <p className="text-sm opacity-70 italic">&ldquo;{finalSentence.content}&rdquo;</p>
+                                <p className={`text-xs font-medium ${scoreColor(finalSentence.score)}`}>
+                                  scored {finalSentence.score}
+                                </p>
+                              </>
+                            ) : (
+                              <p className="text-sm opacity-70">Ran out of time.</p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
-                <Link href="/" className="btn-secondary">
-                  Home
-                </Link>
+              </div>
+            </aside>
+          )}
+
+          <section className="order-1 lg:order-none lg:col-start-2 lg:row-start-1 min-w-0 space-y-5">
+            <div className="card story-frame flex flex-col h-[calc(80vh-220px)] min-h-[240px]">
+              <div className="flex items-center justify-between shrink-0">
+                <h2 className="section-label">The story</h2>
+                <div className="flex items-center gap-1.5">
+                  <button onClick={handleCopyStory} className="btn-icon" title="Copy story text">
+                    {storyCopied ? "Copied!" : "📋 Copy"}
+                  </button>
+                  <button onClick={handleDownloadStory} className="btn-icon" title="Download as .txt">
+                    ⬇ Download
+                  </button>
+                </div>
+              </div>
+              {/* Fixed-height card, scrolls internally - the story keeps
+                  growing but the surrounding layout (header, sidebars,
+                  floating input) never has to move to make room for it. */}
+              <div
+                ref={storyBoxRef}
+                className="story-text leading-relaxed overflow-y-auto flex-1 mt-3 pr-1"
+                style={{ fontFamily: "var(--font-story)" }}
+              >
+                {storySentences.map((s, i) => (
+                  <span key={s.id} className={i === storySentences.length - 1 ? "animate-sentence-in" : ""}>
+                    {s.content}{" "}
+                  </span>
+                ))}
               </div>
             </div>
+
+            {session.status === "finished" && (
+              <div className="text-center space-y-3 py-4">
+                <p className="wordmark text-2xl">{winner ? `${winner.name} wins!` : "Game over"}</p>
+                <p className="text-sm opacity-60">
+                  {session.end_reason === "turn_cap"
+                    ? `Highest score after ${session.max_turns_per_player} turns each.`
+                    : "Last writer standing."}
+                </p>
+
+                {session.end_reason === "turn_cap" && (
+                  <div className="card p-4 space-y-2 text-left max-w-xs mx-auto">
+                    <h2 className="section-label">Final scores</h2>
+                    {[...players]
+                      .map((p) => ({ p, total: totalScoreFor(p.id) }))
+                      .sort((a, b) => b.total - a.total)
+                      .map(({ p, total }, i) => (
+                        <div key={p.id} className="flex items-center gap-2 text-sm">
+                          <span className="w-4 opacity-50">{i + 1}</span>
+                          <Avatar name={p.name} size={20} faded={!p.is_alive} />
+                          <span className={p.id === session.winner_player_id ? "font-semibold" : ""}>{p.name}</span>
+                          <span className="ml-auto font-mono">{total}</span>
+                        </div>
+                      ))}
+                  </div>
+                )}
+
+                <div className="flex items-center justify-center gap-2">
+                  {me && (
+                    <button onClick={handlePlayAgain} disabled={rematchBusy} className="btn-primary">
+                      {rematchBusy ? "Starting..." : "Play again"}
+                    </button>
+                  )}
+                  <Link href="/" className="btn-secondary">
+                    Home
+                  </Link>
+                </div>
+              </div>
+            )}
+          </section>
+
+          {(session.status === "active" || judging || lastTurn || avg !== null) && (
+            <aside className="order-3 lg:order-none lg:col-start-3 lg:row-start-1 lg:rotate-1 hover:lg:rotate-0 transition-transform duration-300">
+              <div className="space-y-5">
+                {session.status === "active" && (
+                  <CountdownBar
+                    secondsLeft={secondsLeft ?? 0}
+                    totalSeconds={session.phase === "cooldown" ? COOLDOWN_SECONDS : session.turn_seconds}
+                    label={
+                      session.phase === "cooldown"
+                        ? isNextUpMe
+                          ? "You're up next"
+                          : `${currentPlayer?.name ?? "..."} is up next`
+                        : isMyTurn
+                          ? "Your turn"
+                          : `Waiting on ${currentPlayer?.name ?? "..."}`
+                    }
+                  />
+                )}
+
+                {(judging || lastTurn || avg !== null) && (
+                  <div
+                    className="card p-4 space-y-2"
+                    style={avgColor ? { borderColor: avgColor.border, borderWidth: 2 } : undefined}
+                  >
+                    <h2 className="section-label">Judge&apos;s verdict</h2>
+
+                    {avg !== null && (
+                      <div className="text-center py-1">
+                        <p className={`text-4xl font-bold leading-none ${avgColor!.text}`}>{avg.toFixed(1)}</p>
+                        <p className="text-[11px] opacity-50 mt-1">running average</p>
+                      </div>
+                    )}
+
+                    {judging ? (
+                      <p className="text-sm opacity-70 animate-pulse-soft">✒️ The judge is reading your line...</p>
+                    ) : (
+                      lastTurn && (
+                        <div className="space-y-1 pt-1" style={{ borderTop: "1px solid var(--border)" }}>
+                          <div className="flex items-center gap-3 pt-2">
+                            <Avatar name={lastTurnPlayer?.name ?? "?"} size={22} />
+                            <span className="text-sm font-medium">{lastTurnPlayer?.name ?? "Unknown"}</span>
+                            <span className={`verdict-seal ml-auto text-lg font-bold ${scoreColor(lastTurn.score)}`}>
+                              {lastTurn.score}
+                            </span>
+                          </div>
+                          {lastTurn.score !== null && (
+                            <div className="verdict-gauge-track">
+                              <div className="verdict-gauge-danger" />
+                              <div
+                                className="verdict-gauge-marker"
+                                style={{ left: `${Math.max(0, Math.min(100, lastTurn.score))}%` }}
+                              />
+                            </div>
+                          )}
+                          {lastTurn.reasoning && <p className="text-sm opacity-70 pt-1">{lastTurn.reasoning}</p>}
+                          {lastTurn.removed && (
+                            <p className="text-xs text-red-500 font-medium">
+                              Average dropped below 50 — this sentence was removed and{" "}
+                              {lastTurnPlayer?.name ?? "the player"} is eliminated.
+                            </p>
+                          )}
+                        </div>
+                      )
+                    )}
+                  </div>
+                )}
+              </div>
+            </aside>
           )}
-        </section>
+        </div>
       )}
 
-      {error && <p className="text-sm text-red-500">{error}</p>}
+      {isMyTurn && (
+        // Floating, not docked to the flow - so you never have to scroll
+        // down to find it, no matter how long the story or the sidebars get.
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 w-[calc(100%-2rem)] max-w-2xl">
+          <form onSubmit={handleSubmit} className="card p-3 shadow-lg space-y-2">
+            <textarea
+              className="field"
+              rows={2}
+              placeholder="Continue the story..."
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              maxLength={MAX_SENTENCE_LENGTH}
+              required
+            />
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-xs opacity-50">
+                {draft.length}/{MAX_SENTENCE_LENGTH}
+              </p>
+              <button type="submit" disabled={busy} className="btn-primary">
+                Submit sentence
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {error && <p className="text-sm text-red-500 max-w-2xl mx-auto w-full">{error}</p>}
     </main>
   );
 }

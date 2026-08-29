@@ -38,8 +38,11 @@ anti-stall rule, not scoring pressure, so it applies in Marathon too.
 
 ## How it works
 
-- **Create/join** — `app/page.tsx`. Each browser stores its player id for the
-  session in `localStorage` (`lib/identity.ts`) — no auth.
+- **Create/join** — `app/page.tsx`. Each *tab* stores its player id for the
+  session in `sessionStorage` (`lib/identity.ts`) — no auth. Deliberately
+  per-tab, not per-browser: a host and a participant open in two tabs of the
+  same browser must not clobber each other's identity, which `localStorage`
+  (shared across tabs) would do.
 - **Game engine** — `lib/game.ts` holds all state transitions (create, join,
   start, submit sentence, timeout) and runs server-side only, using the
   Supabase service-role client so it can bypass RLS.
@@ -72,7 +75,8 @@ anti-stall rule, not scoring pressure, so it applies in Marathon too.
 - Race handling between a last-second submit and a timeout firing is
   best-effort (guarded DB updates, not a transaction) — fine for casual play,
   not bulletproof under adversarial timing.
-- No reconnect/rejoin flow if a player clears `localStorage` mid-game.
+- No reconnect/rejoin flow if a player closes their tab (or clears
+  `sessionStorage`) mid-game.
 - `npx eslint .` currently fails in this environment due to a broken
   `@babel/core` resolution unrelated to this project's code (`next build`
   compiles and type-checks cleanly) — try a clean `node_modules` reinstall if

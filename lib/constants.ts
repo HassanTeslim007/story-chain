@@ -18,3 +18,7 @@ export const ELIMINATION_SAFETY_TURN_CAP = 15;
 // Marathon mode has no elimination at all - the turn cap IS the game length,
 // so it's the host's headline choice (rounds per player).
 export const MARATHON_TURN_OPTIONS = [4, 6, 8, 10];
+
+// Loose ceiling on a turn's length - not "one sentence" anymore (line breaks
+// are allowed), just a guard against unbounded pastes.
+export const MAX_SENTENCE_LENGTH = 1500;
