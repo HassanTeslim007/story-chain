@@ -1,19 +1,19 @@
 import { z } from "zod";
 
-const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
-const JUDGE_MODEL = "openai/gpt-4o";
+const DEEPSEEK_URL = "https://api.deepseek.com/chat/completions";
+const JUDGE_MODEL = "deepseek-flash";
 
-// gpt-4o occasionally derails inside strict json_schema output and appends
-// token soup (stray braces, mixed scripts) after an otherwise-clean string.
-// Real prose never contains curly braces or 40+ char unbroken runs, so this
-// catches it cheaply without a second model call to judge the judge.
+// Models occasionally derail inside JSON output and append token soup (stray
+// braces, mixed scripts) after an otherwise-clean string. Real prose never
+// contains curly braces or 40+ char unbroken runs, so this catches it
+// cheaply without a second model call to judge the judge.
 function isClean(text: string): boolean {
   if (/[{}]/.test(text)) return false;
   if (/\S{40,}/.test(text)) return false;
   return true;
 }
 
-async function callOpenRouter<T extends z.ZodType>(
+async function callDeepSeek<T extends z.ZodType>(
   schema: T,
   schemaName: string,
   system: string,
@@ -21,13 +21,19 @@ async function callOpenRouter<T extends z.ZodType>(
   maxTokens: number,
   isResultClean: (parsed: z.infer<T>) => boolean = () => true,
 ): Promise<z.infer<T>> {
+  // DeepSeek's JSON mode only supports response_format: {type: "json_object"} -
+  // no server-enforced schema like OpenAI/OpenRouter's strict json_schema. So
+  // the shape has to be spelled out in the prompt, and the Zod parse below is
+  // the only real guarantee of correctness (hence the retry loop).
+  const shapeHint =
+    `Respond with ONLY a JSON object (no other text) matching this schema, named "${schemaName}":\n` +
+    JSON.stringify(z.toJSONSchema(schema));
+
   for (let attempt = 0; attempt < 2; attempt++) {
-    const response = await fetch(OPENROUTER_URL, {
+    const response = await fetch(DEEPSEEK_URL, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
-        "HTTP-Referer": "https://story-chain.local",
-        "X-Title": "Story Chain",
+        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -35,28 +41,21 @@ async function callOpenRouter<T extends z.ZodType>(
         max_tokens: maxTokens,
         temperature: 0.7,
         messages: [
-          { role: "system", content: system },
+          { role: "system", content: `${system}\n\n${shapeHint}` },
           { role: "user", content: user },
         ],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: schemaName,
-            strict: true,
-            schema: z.toJSONSchema(schema),
-          },
-        },
+        response_format: { type: "json_object" },
       }),
     });
     if (!response.ok) {
-      throw new Error(`OpenRouter request failed: ${response.status} ${await response.text()}`);
+      throw new Error(`DeepSeek request failed: ${response.status} ${await response.text()}`);
     }
     const data = await response.json();
     const content = data.choices[0].message.content;
     const parsed = schema.parse(JSON.parse(content));
     if (isResultClean(parsed)) return parsed;
   }
-  throw new Error("OpenRouter returned malformed output twice in a row");
+  throw new Error("DeepSeek returned malformed output twice in a row");
 }
 
 const OpeningSchema = z.object({
@@ -64,7 +63,7 @@ const OpeningSchema = z.object({
 });
 
 export async function generateOpening(): Promise<string[]> {
-  const result = await callOpenRouter(
+  const result = await callDeepSeek(
     OpeningSchema,
     "story_opening",
     "You write vivid, open-ended openings for a collaborative multiplayer story game. " +
@@ -88,7 +87,7 @@ export async function scoreSentence(
   storySoFar: string[],
   newSentence: string,
 ): Promise<JudgeResult> {
-  return callOpenRouter(
+  return callDeepSeek(
     ScoreSchema,
     "sentence_score",
     `You judge one turn of a collaborative story-writing elimination game. Score the NEW SENTENCE 0-100 on how well it continues the story, weighing in order of importance:

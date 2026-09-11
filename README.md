@@ -28,7 +28,7 @@ anti-stall rule, not scoring pressure, so it applies in Marathon too.
      Settings → API.
    - `SUPABASE_SERVICE_ROLE_KEY` — same page (server-only, never expose to the
      client).
-   - `OPENROUTER_API_KEY` — from [openrouter.ai](https://openrouter.ai/keys).
+   - `DEEPSEEK_API_KEY` — from [platform.deepseek.com](https://platform.deepseek.com/api_keys).
 3. **Run it:**
    ```bash
    npm install
@@ -46,10 +46,12 @@ anti-stall rule, not scoring pressure, so it applies in Marathon too.
 - **Game engine** — `lib/game.ts` holds all state transitions (create, join,
   start, submit sentence, timeout) and runs server-side only, using the
   Supabase service-role client so it can bypass RLS.
-- **AI** — `lib/claude.ts` calls GPT-4o via OpenRouter twice per game turn:
-  once to generate the opening (on start), once per submitted sentence to
-  score it. Both use structured outputs (Zod schema → JSON schema) so the
-  response is always valid JSON.
+- **AI** — `lib/claude.ts` calls DeepSeek (`deepseek-flash`) twice per game
+  turn: once to generate the opening (on start), once per submitted sentence
+  to score it. DeepSeek's JSON mode has no schema enforcement (`json_object`
+  only, not OpenAI-style strict `json_schema`), so the shape is spelled out
+  in the prompt and validated against the Zod schema on the way back, with
+  one retry if it comes back malformed.
 - **Live sync** — the game room (`app/session/[code]/page.tsx`) subscribes to
   Postgres changes on `sessions`/`players`/`sentences` via Supabase Realtime,
   so every connected browser re-renders as soon as any player acts.
