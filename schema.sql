@@ -10,6 +10,7 @@ create table sessions (
   mode text not null default 'elimination' check (mode in ('elimination', 'marathon')),
   max_turns_per_player int not null default 12, -- safety cap (elimination) or the whole point (marathon)
   end_reason text check (end_reason in ('elimination', 'turn_cap')),
+  genre text,                              -- steers the AI opening; null/empty = "surprise me"
   turn_seconds int not null default 30,
   current_turn_player_id uuid,
   turn_number int not null default 0,
@@ -53,3 +54,10 @@ create policy "public read sentences" on sentences for select using (true);
 
 -- All writes go through server-side API routes using the service role key,
 -- which bypasses RLS, so no public write policies are defined.
+
+-- No history feature reads old sessions, so a pg_cron job purges them hourly
+-- rather than keeping them forever: finished sessions after a 24h grace
+-- period (so players can still revisit/export right after), and abandoned
+-- lobby/active sessions nobody ever finished, same threshold. players and
+-- sentences cascade-delete via their FK on sessions. See the
+-- add_stale_session_cleanup migration for the actual function/schedule.

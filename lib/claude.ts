@@ -62,14 +62,17 @@ const OpeningSchema = z.object({
   sentences: z.array(z.string()).min(3).max(5),
 });
 
-export async function generateOpening(): Promise<string[]> {
+export async function generateOpening(genre?: string | null): Promise<string[]> {
+  const instruction = genre?.trim()
+    ? `Write a fresh, original story opening in this genre/theme: ${genre.trim()}.`
+    : "Write a fresh, original story opening. Pick any genre.";
   const result = await callDeepSeek(
     OpeningSchema,
     "story_opening",
     "You write vivid, open-ended openings for a collaborative multiplayer story game. " +
       "3-5 sentences. End on a hook that invites someone else to continue the story - " +
       "don't resolve anything.",
-    "Write a fresh, original story opening. Pick any genre.",
+    instruction,
     1024,
     (parsed) => parsed.sentences.every(isClean),
   );

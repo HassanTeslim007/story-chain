@@ -11,6 +11,7 @@ export type Session = {
   mode: SessionMode;
   max_turns_per_player: number;
   end_reason: EndReason | null;
+  genre: string | null;
   turn_seconds: number;
   current_turn_player_id: string | null;
   turn_number: number;

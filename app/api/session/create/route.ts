@@ -4,7 +4,7 @@ import type { SessionMode } from "@/lib/types";
 
 export async function POST(req: NextRequest) {
   try {
-    const { hostName, turnSeconds, mode, maxTurnsPerPlayer } = await req.json();
+    const { hostName, turnSeconds, mode, maxTurnsPerPlayer, genre } = await req.json();
     if (!hostName || typeof hostName !== "string") {
       return NextResponse.json({ error: "hostName is required" }, { status: 400 });
     }
@@ -15,6 +15,7 @@ export async function POST(req: NextRequest) {
       seconds,
       resolvedMode,
       Number(maxTurnsPerPlayer) || undefined,
+      typeof genre === "string" ? genre : undefined,
     );
     return NextResponse.json({ session, player });
   } catch (err) {

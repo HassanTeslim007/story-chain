@@ -8,6 +8,7 @@ import {
   ELIMINATION_SAFETY_TURN_CAP,
   MARATHON_TURN_OPTIONS,
   MAX_SENTENCE_LENGTH,
+  MAX_GENRE_LENGTH,
 } from "./constants";
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I
@@ -119,6 +120,7 @@ export async function createSession(
   turnSeconds: number,
   mode: SessionMode = "elimination",
   maxTurnsPerPlayer?: number,
+  genre?: string | null,
 ) {
   const db = getServiceClient();
 
@@ -132,6 +134,7 @@ export async function createSession(
         ? (maxTurnsPerPlayer as number)
         : MARATHON_TURN_OPTIONS[0]
       : ELIMINATION_SAFETY_TURN_CAP;
+  const resolvedGenre = genre?.trim() ? genre.trim().slice(0, MAX_GENRE_LENGTH) : null;
 
   let code = randomCode();
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -146,7 +149,13 @@ export async function createSession(
 
   const { data: session, error: sessionError } = await db
     .from("sessions")
-    .insert({ code, turn_seconds: seconds, mode: resolvedMode, max_turns_per_player: maxTurns })
+    .insert({
+      code,
+      turn_seconds: seconds,
+      mode: resolvedMode,
+      max_turns_per_player: maxTurns,
+      genre: resolvedGenre,
+    })
     .select("*")
     .single();
   if (sessionError || !session) throw new GameError(sessionError?.message ?? "Could not create session");
@@ -185,7 +194,7 @@ export async function startGame(code: string) {
   const players = await getPlayers(session.id);
   if (players.length < 2) throw new GameError("Need at least 2 players to start");
 
-  const opening = await generateOpening();
+  const opening = await generateOpening(session.genre);
   const { error: sentenceError } = await db.from("sentences").insert({
     session_id: session.id,
     player_id: null,

@@ -4,7 +4,13 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { savePlayerIdentity } from "@/lib/identity";
 import { ThemePicker } from "@/components/ThemePicker";
-import { TURN_SECONDS_OPTIONS, MARATHON_TURN_OPTIONS, ELIMINATION_SAFETY_TURN_CAP } from "@/lib/constants";
+import {
+  TURN_SECONDS_OPTIONS,
+  MARATHON_TURN_OPTIONS,
+  ELIMINATION_SAFETY_TURN_CAP,
+  GENRE_OPTIONS,
+  MAX_GENRE_LENGTH,
+} from "@/lib/constants";
 import type { SessionMode } from "@/lib/types";
 
 function Chips<T extends string | number>({
@@ -77,6 +83,8 @@ export default function HomePage() {
   const [turnSeconds, setTurnSeconds] = useState(TURN_SECONDS_OPTIONS[0]);
   const [gameMode, setGameMode] = useState<SessionMode>("elimination");
   const [maxTurns, setMaxTurns] = useState(MARATHON_TURN_OPTIONS[0]);
+  const [genre, setGenre] = useState(""); // "" = surprise me
+  const [customGenre, setCustomGenre] = useState(false);
   const [joinCode, setJoinCode] = useState("");
   const [mode, setMode] = useState<"create" | "join">("create");
   const [loading, setLoading] = useState(false);
@@ -95,6 +103,7 @@ export default function HomePage() {
           turnSeconds,
           mode: gameMode,
           maxTurnsPerPlayer: gameMode === "marathon" ? maxTurns : undefined,
+          genre,
         }),
       });
       const data = await res.json();
@@ -203,6 +212,60 @@ export default function HomePage() {
                     onChange={setTurnSeconds}
                     format={(s) => `${s / 60}m`}
                   />
+                </div>
+
+                <div className="space-y-2.5">
+                  <span className="text-sm opacity-60">Genre</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {["", ...GENRE_OPTIONS].map((opt) => {
+                      const active = !customGenre && genre === opt;
+                      return (
+                        <button
+                          key={opt || "surprise"}
+                          type="button"
+                          onClick={() => {
+                            setCustomGenre(false);
+                            setGenre(opt);
+                          }}
+                          className="text-sm px-3 py-1.5 border"
+                          style={{
+                            borderRadius: "var(--radius)",
+                            borderColor: active ? "var(--accent)" : "var(--border)",
+                            backgroundColor: active ? "var(--accent)" : "transparent",
+                            color: active ? "white" : "var(--foreground)",
+                          }}
+                        >
+                          {opt || "Surprise me"}
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setCustomGenre(true);
+                        setGenre("");
+                      }}
+                      className="text-sm px-3 py-1.5 border"
+                      style={{
+                        borderRadius: "var(--radius)",
+                        borderColor: customGenre ? "var(--accent)" : "var(--border)",
+                        backgroundColor: customGenre ? "var(--accent)" : "transparent",
+                        color: customGenre ? "white" : "var(--foreground)",
+                      }}
+                    >
+                      Custom…
+                    </button>
+                  </div>
+                  {customGenre && (
+                    <input
+                      className="field"
+                      placeholder="e.g. cozy bakery mystery, cyberpunk heist..."
+                      value={genre}
+                      onChange={(e) => setGenre(e.target.value)}
+                      maxLength={MAX_GENRE_LENGTH}
+                      autoFocus
+                    />
+                  )}
                 </div>
 
                 {gameMode === "marathon" && (

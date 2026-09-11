@@ -440,6 +440,7 @@ export default function SessionPage() {
         <section className="text-center space-y-3">
           <p className="text-sm opacity-60">Share the code or scan to join.</p>
           <p className="marquee-code text-2xl font-mono font-bold inline-block">{code}</p>
+          <p className="text-xs opacity-50">Genre: {session.genre || "Surprise me"}</p>
           {joinUrl && (
             <div className="flex justify-center">
               <QRCode value={joinUrl} />

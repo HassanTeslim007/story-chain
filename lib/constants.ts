@@ -22,3 +22,8 @@ export const MARATHON_TURN_OPTIONS = [4, 6, 8, 10];
 // Loose ceiling on a turn's length - not "one sentence" anymore (line breaks
 // are allowed), just a guard against unbounded pastes.
 export const MAX_SENTENCE_LENGTH = 1500;
+
+// Chip options for the opening's genre/theme. Empty string = "surprise me"
+// (any genre, the original behavior); a host can also type a custom one.
+export const GENRE_OPTIONS = ["Fantasy", "Sci-Fi", "Mystery", "Horror", "Romance", "Comedy", "Adventure"] as const;
+export const MAX_GENRE_LENGTH = 60;
