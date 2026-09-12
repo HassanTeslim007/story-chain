@@ -45,7 +45,30 @@ async function getPlayers(sessionId: string): Promise<Player[]> {
   return (data ?? []) as Player[];
 }
 
-function nextAlivePlayer(players: Player[], afterPlayerId: string): Player | null {
+// Best-effort funnel logging (created -> started -> finished). Insert-only,
+// no FK to sessions - deliberately decoupled so the cleanup job can purge
+// full session/story content without touching these rows. Never let a
+// logging failure break the actual game.
+async function logGameEvent(
+  db: ReturnType<typeof getServiceClient>,
+  event: "created" | "started" | "finished",
+  session: Pick<Session, "code" | "mode" | "genre" | "turn_seconds">,
+  extra?: { player_count?: number; end_reason?: string | null; turns_played?: number },
+) {
+  const { error } = await db.from("game_events").insert({
+    event,
+    session_code: session.code,
+    mode: session.mode,
+    genre: session.genre,
+    turn_seconds: session.turn_seconds,
+    player_count: extra?.player_count ?? null,
+    end_reason: extra?.end_reason ?? null,
+    turns_played: extra?.turns_played ?? null,
+  });
+  if (error) console.error("game_events insert failed:", error.message);
+}
+
+export function nextAlivePlayer(players: Player[], afterPlayerId: string): Player | null {
   const alive = players.filter((p) => p.is_alive);
   if (alive.length === 0) return null;
   const idx = players.findIndex((p) => p.id === afterPlayerId);
@@ -76,19 +99,31 @@ async function topScorer(sessionId: string, candidateIds: string[]): Promise<str
   return candidateIds.reduce((best, id) => (totals.get(id)! > totals.get(best)! ? id : best));
 }
 
-// Decides whether the game ends given this turn's alive-player set, or
-// returns null to continue to the next turn. Two ways to end: elimination
-// reduced the field to one player, or every remaining player has hit the
-// turn cap (elimination mode's safety net, or marathon's actual game
-// length) - in which case the highest total individual score wins.
-async function resolveEnding(session: Session, alive: Player[]): Promise<Partial<Session> | null> {
+// Pure decision of whether/why the game ends given this turn's alive-player
+// set - exported so it's unit-testable without a Supabase client. Two ways
+// to end: elimination reduced the field to one player, or every remaining
+// player has hit the turn cap (elimination mode's safety net, or marathon's
+// actual game length).
+export function endReasonFor(
+  session: Pick<Session, "max_turns_per_player">,
+  alive: Player[],
+): "elimination" | "turn_cap" | null {
   if (alive.length === 0) {
     // Exactly one player is removed per resolution out of a pool that was
     // >=2 alive, so this should be unreachable - assert rather than
     // silently finishing the game with a null winner.
     throw new GameError("Elimination left no players alive - unreachable, game state is corrupted");
   }
-  if (alive.length === 1) {
+  if (alive.length === 1) return "elimination";
+  if (alive.every((p) => p.turns_taken >= session.max_turns_per_player)) return "turn_cap";
+  return null;
+}
+
+// DB-touching wrapper: turns a reason into the actual session patch, looking
+// up the turn-cap winner (highest total individual score) when needed.
+async function resolveEnding(session: Session, alive: Player[]): Promise<Partial<Session> | null> {
+  const reason = endReasonFor(session, alive);
+  if (reason === "elimination") {
     return {
       status: "finished",
       end_reason: "elimination",
@@ -98,7 +133,7 @@ async function resolveEnding(session: Session, alive: Player[]): Promise<Partial
       phase: "turn",
     };
   }
-  if (alive.every((p) => p.turns_taken >= session.max_turns_per_player)) {
+  if (reason === "turn_cap") {
     const winnerId = await topScorer(
       session.id,
       alive.map((p) => p.id),
@@ -167,6 +202,8 @@ export async function createSession(
     .single();
   if (playerError || !player) throw new GameError(playerError?.message ?? "Could not create player");
 
+  await logGameEvent(db, "created", session as Session);
+
   return { session: session as Session, player: player as Player };
 }
 
@@ -221,6 +258,8 @@ export async function startGame(code: string) {
     .eq("id", session.id)
     .eq("status", "lobby");
   if (updateError) throw new GameError(updateError.message);
+
+  await logGameEvent(db, "started", session, { player_count: players.length });
 }
 
 export async function submitSentence(code: string, playerId: string, content: string) {
@@ -325,6 +364,14 @@ export async function submitSentence(code: string, playerId: string, content: st
     await db.from("players").update({ is_alive: false }).eq("id", playerId);
   }
 
+  if (ending) {
+    await logGameEvent(db, "finished", session, {
+      player_count: players.length,
+      end_reason: ending.end_reason ?? null,
+      turns_played: session.turn_number,
+    });
+  }
+
   return { score, reasoning, eliminated };
 }
 
@@ -391,5 +438,14 @@ export async function checkTimeout(code: string) {
   }
 
   await db.from("players").update({ is_alive: false }).eq("id", expiredPlayerId);
+
+  if (ending) {
+    await logGameEvent(db, "finished", session, {
+      player_count: players.length,
+      end_reason: ending.end_reason ?? null,
+      turns_played: session.turn_number,
+    });
+  }
+
   return { advanced: true };
 }

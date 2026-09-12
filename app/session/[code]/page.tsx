@@ -409,6 +409,28 @@ export default function SessionPage() {
         </form>
       )}
 
+      {!me && session.status === "active" && players.some((p) => p.is_alive) && (
+        <section className="card p-4 space-y-2 text-center">
+          <p className="text-sm opacity-70">Lost your seat? Tap your name to reconnect.</p>
+          <div className="flex flex-wrap justify-center gap-2">
+            {players
+              .filter((p) => p.is_alive)
+              .map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => {
+                    savePlayerIdentity(code, p.id);
+                    setPlayerId(p.id);
+                  }}
+                  className="btn-secondary text-sm"
+                >
+                  {p.name}
+                </button>
+              ))}
+          </div>
+        </section>
+      )}
+
       <section className="card p-4 space-y-2">
         <h2 className="section-label">
           Players {avg !== null && `· avg score ${avg.toFixed(1)}`}

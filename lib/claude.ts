@@ -13,6 +13,19 @@ function isClean(text: string): boolean {
   return true;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// A 4xx means the request itself is wrong (bad key, bad payload) - retrying
+// changes nothing, so it's thrown immediately instead of burning attempts.
+// Everything else (network failures, 5xx, malformed output) is retried by
+// default - it's easy to forget to mark a new failure mode as retryable, but
+// impossible to forget this one, since it's the only type that skips retry.
+class NonRetryableError extends Error {}
+
+const MAX_ATTEMPTS = 3;
+
 async function callDeepSeek<T extends z.ZodType>(
   schema: T,
   schemaName: string,
@@ -29,33 +42,42 @@ async function callDeepSeek<T extends z.ZodType>(
     `Respond with ONLY a JSON object (no other text) matching this schema, named "${schemaName}":\n` +
     JSON.stringify(z.toJSONSchema(schema));
 
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const response = await fetch(DEEPSEEK_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: JUDGE_MODEL,
-        max_tokens: maxTokens,
-        temperature: 0.7,
-        messages: [
-          { role: "system", content: `${system}\n\n${shapeHint}` },
-          { role: "user", content: user },
-        ],
-        response_format: { type: "json_object" },
-      }),
-    });
-    if (!response.ok) {
-      throw new Error(`DeepSeek request failed: ${response.status} ${await response.text()}`);
+  let lastError: Error = new Error("DeepSeek call failed");
+
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      const response = await fetch(DEEPSEEK_URL, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: JUDGE_MODEL,
+          max_tokens: maxTokens,
+          temperature: 0.7,
+          messages: [
+            { role: "system", content: `${system}\n\n${shapeHint}` },
+            { role: "user", content: user },
+          ],
+          response_format: { type: "json_object" },
+        }),
+      });
+      if (!response.ok) {
+        const message = `DeepSeek request failed: ${response.status} ${await response.text()}`;
+        throw response.status >= 400 && response.status < 500 ? new NonRetryableError(message) : new Error(message);
+      }
+      const data = await response.json();
+      const parsed = schema.parse(JSON.parse(data.choices[0].message.content));
+      if (isResultClean(parsed)) return parsed;
+      throw new Error("DeepSeek returned malformed or unclean output");
+    } catch (err) {
+      if (err instanceof NonRetryableError) throw err;
+      lastError = err instanceof Error ? err : lastError;
+      if (attempt < MAX_ATTEMPTS - 1) await sleep(300 * 2 ** attempt);
     }
-    const data = await response.json();
-    const content = data.choices[0].message.content;
-    const parsed = schema.parse(JSON.parse(content));
-    if (isResultClean(parsed)) return parsed;
   }
-  throw new Error("DeepSeek returned malformed output twice in a row");
+  throw lastError;
 }
 
 const OpeningSchema = z.object({

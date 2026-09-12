@@ -43,14 +43,36 @@ create table sentences (
   created_at timestamptz not null default now()
 );
 
+-- Lightweight, insert-only analytics - deliberately NOT a FK to sessions, so
+-- the cleanup job below can purge full session/story content on its own
+-- schedule without ever touching these rows. No player names, no story
+-- content - just enough to answer "how many people play, and how far do
+-- they get" (created -> started -> finished funnel).
+create table game_events (
+  id uuid primary key default gen_random_uuid(),
+  event text not null check (event in ('created', 'started', 'finished')),
+  session_code text not null,
+  mode text not null,
+  genre text,
+  turn_seconds int not null,
+  player_count int,
+  end_reason text,
+  turns_played int,
+  created_at timestamptz not null default now()
+);
+
 alter table sessions enable row level security;
 alter table players enable row level security;
 alter table sentences enable row level security;
+alter table game_events enable row level security;
 
 -- MVP: fully open policies (no auth). Tighten later if needed.
 create policy "public read sessions" on sessions for select using (true);
 create policy "public read players" on players for select using (true);
 create policy "public read sentences" on sentences for select using (true);
+
+-- game_events gets NO policies at all - anon/authenticated clients have zero
+-- access. Only the service-role key (which bypasses RLS) reads or writes it.
 
 -- All writes go through server-side API routes using the service role key,
 -- which bypasses RLS, so no public write policies are defined.

@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createSession, GameError } from "@/lib/game";
 import type { SessionMode } from "@/lib/types";
+import { checkRateLimit, clientIp } from "@/lib/rateLimit";
 
 export async function POST(req: NextRequest) {
   try {
+    if (!(await checkRateLimit("create", clientIp(req), 8, 600))) {
+      return NextResponse.json({ error: "Too many games created - try again in a few minutes." }, { status: 429 });
+    }
     const { hostName, turnSeconds, mode, maxTurnsPerPlayer, genre } = await req.json();
     if (!hostName || typeof hostName !== "string") {
       return NextResponse.json({ error: "hostName is required" }, { status: 400 });
