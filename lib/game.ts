@@ -6,6 +6,7 @@ import {
   MIN_TURN_SECONDS,
   MAX_TURN_SECONDS,
   UNLIMITED_TURN_SECONDS,
+  AI_TURN_SECONDS_FLOOR,
   ELIMINATION_SAFETY_TURN_CAP,
   MARATHON_TURN_OPTIONS,
   MAX_SENTENCE_LENGTH,
@@ -532,12 +533,21 @@ export async function checkTimeout(code: string) {
 
   if (session.phase === "cooldown") {
     // Cooldown elapsed - open the next player's turn. No elimination here.
+    // The AI needs two chained DeepSeek calls, not just typing speed, so it
+    // gets a floor under whatever the human picked for their own turn -
+    // otherwise a short human timer times out an AI request that's still
+    // legitimately in flight.
+    const upcoming = (await getPlayers(session.id)).find((p) => p.id === session.current_turn_player_id);
+    const effectiveTurnSeconds =
+      session.turn_seconds > 0 && upcoming?.is_ai
+        ? Math.max(session.turn_seconds, AI_TURN_SECONDS_FLOOR)
+        : session.turn_seconds;
+
     const { data: updatedRows, error } = await db
       .from("sessions")
       .update({
         phase: "turn",
-        turn_deadline:
-          session.turn_seconds > 0 ? new Date(Date.now() + session.turn_seconds * 1000).toISOString() : null,
+        turn_deadline: effectiveTurnSeconds > 0 ? new Date(Date.now() + effectiveTurnSeconds * 1000).toISOString() : null,
       })
       .eq("id", session.id)
       .eq("phase", "cooldown")

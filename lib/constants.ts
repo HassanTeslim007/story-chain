@@ -15,6 +15,13 @@ export const TURN_SECONDS_OPTIONS = [60, 120, 180, 240, 300];
 // clamped-down value - only offered as a chip in solo mode.
 export const UNLIMITED_TURN_SECONDS = 0;
 
+// The AI's turn needs two chained DeepSeek calls (write, then get judged),
+// not just typing speed - racing that against a human's own short per-turn
+// timer (as low as 60s) means an ordinary slow API moment gets it timed out
+// mid-flight even though the request is still legitimately in progress.
+// Applied as a floor, not a replacement - a longer human timer still wins.
+export const AI_TURN_SECONDS_FLOOR = 90;
+
 // Elimination mode has no host-facing turn cap - this is just a safety net
 // so a game between strong writers who never trip the avg<50 line can't run
 // forever. Generous on purpose; if it's ever reached, ranking falls back to

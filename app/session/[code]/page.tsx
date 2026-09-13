@@ -6,7 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getPlayerIdentity, savePlayerIdentity } from "@/lib/identity";
 import { postJson } from "@/lib/apiFetch";
-import { COOLDOWN_SECONDS, MAX_SENTENCE_LENGTH } from "@/lib/constants";
+import { COOLDOWN_SECONDS, MAX_SENTENCE_LENGTH, AI_TURN_SECONDS_FLOOR } from "@/lib/constants";
 import { useSpeechToText } from "@/lib/useSpeechToText";
 import { useServerClockOffset } from "@/lib/useServerClockOffset";
 import { useGameSounds } from "@/lib/useGameSounds";
@@ -168,17 +168,33 @@ export default function SessionPage() {
     return Math.max(0, Math.ceil((new Date(session.turn_deadline).getTime() - now) / 1000));
   }, [session?.turn_deadline, now]);
 
-  const timeoutFiredFor = useRef<string | null>(null);
+  // Not a "fire once per turn" guard - a call that returns advanced:false
+  // (arrived slightly before the server's own deadline, lost a race, a
+  // network blip) used to permanently mark that turn as "handled" with
+  // nothing left to ever retry it, since secondsLeft clamps to 0 and stays
+  // there - a value that isn't changing can't re-trigger a dependency-array
+  // effect. That's exactly "stuck until I refresh": the game only moved
+  // again once a full remount reset the guard. checkTimeout is idempotent
+  // and cheap, so just keep nudging it on an interval instead of ever
+  // giving up - it naturally stops the moment `session` actually advances.
   useEffect(() => {
-    if (!session || session.status !== "active" || secondsLeft === null) return;
-    if (secondsLeft > 0) return;
-    const key = `${session.current_turn_player_id}-${session.turn_number}-${session.phase}`;
-    if (timeoutFiredFor.current === key) return;
-    timeoutFiredFor.current = key;
-    fetch(`/api/session/${code}/timeout`, { method: "POST" })
-      .then(fetchState)
-      .catch(() => {});
-  }, [secondsLeft, session, code, fetchState]);
+    if (!session || session.status !== "active" || !session.turn_deadline) return;
+    const deadlineMs = new Date(session.turn_deadline).getTime();
+    let inFlight = false;
+    const check = () => {
+      if (inFlight || Date.now() + clockOffset < deadlineMs) return;
+      inFlight = true;
+      fetch(`/api/session/${code}/timeout`, { method: "POST" })
+        .then(fetchState)
+        .catch(() => {})
+        .finally(() => {
+          inFlight = false;
+        });
+    };
+    check();
+    const interval = setInterval(check, 2000);
+    return () => clearInterval(interval);
+  }, [session, code, fetchState, clockOffset]);
 
   // No server-side cron exists in this app - whoever's browser is watching
   // the game is what notices (via Realtime) that the AI holds the turn and
@@ -708,7 +724,13 @@ export default function SessionPage() {
                   ) : (
                     <CountdownBar
                       secondsLeft={secondsLeft ?? 0}
-                      totalSeconds={session.phase === "cooldown" ? COOLDOWN_SECONDS : session.turn_seconds}
+                      totalSeconds={
+                        session.phase === "cooldown"
+                          ? COOLDOWN_SECONDS
+                          : currentPlayer?.is_ai
+                            ? Math.max(session.turn_seconds, AI_TURN_SECONDS_FLOOR)
+                            : session.turn_seconds
+                      }
                       label={
                         session.phase === "cooldown"
                           ? isNextUpMe

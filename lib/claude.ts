@@ -14,6 +14,47 @@ function isClean(text: string): boolean {
   return true;
 }
 
+// DeepSeek's JSON mode is prompted, not schema-enforced (see the comment on
+// shapeHint below), so the model occasionally writes a literal newline/tab
+// inside a string value instead of escaping it as \n/\t. A raw control
+// character inside a JSON string is illegal - JSON.parse can't tell where
+// the string was supposed to end and throws "Unterminated string in JSON".
+// Escape any control character found while inside a quoted string before
+// parsing, rather than let a formatting slip from the model crash the call
+// (an unescaped `"` is a different, rarer failure mode this can't fix -
+// it closes the string early instead of leaving it unterminated).
+export function escapeControlCharsInStrings(raw: string): string {
+  let result = "";
+  let inString = false;
+  let escaped = false;
+  for (const ch of raw) {
+    if (!inString) {
+      result += ch;
+      if (ch === '"') inString = true;
+      continue;
+    }
+    if (escaped) {
+      result += ch;
+      escaped = false;
+    } else if (ch === "\\") {
+      result += ch;
+      escaped = true;
+    } else if (ch === '"') {
+      result += ch;
+      inString = false;
+    } else if (ch === "\n") {
+      result += "\\n";
+    } else if (ch === "\r") {
+      result += "\\r";
+    } else if (ch === "\t") {
+      result += "\\t";
+    } else {
+      result += ch;
+    }
+  }
+  return result;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -88,7 +129,7 @@ async function callDeepSeek<T extends z.ZodType>(
         throw response.status >= 400 && response.status < 500 ? new NonRetryableError(message) : new Error(message);
       }
       const data = await response.json();
-      const parsed = schema.parse(JSON.parse(data.choices[0].message.content));
+      const parsed = schema.parse(JSON.parse(escapeControlCharsInStrings(data.choices[0].message.content)));
       if (isResultClean(parsed)) return parsed;
       throw new Error("DeepSeek returned malformed or unclean output");
     } catch (err) {
