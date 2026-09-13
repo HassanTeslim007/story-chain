@@ -216,6 +216,25 @@ export default function SessionPage() {
     if (!res.ok) setError(data.error);
   }
 
+  async function handleCancel() {
+    if (!playerId) return;
+    if (!window.confirm("Cancel this game? This can't be undone.")) return;
+    setBusy(true);
+    setError(null);
+    const res = await fetch(`/api/session/${code}/cancel`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ playerId }),
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      setBusy(false);
+      setError(data.error);
+      return;
+    }
+    router.push("/");
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!playerId) return;
@@ -473,10 +492,15 @@ export default function SessionPage() {
             </div>
           )}
           {me && (
-            <div>
+            <div className="flex items-center justify-center gap-2">
               <button onClick={handleStart} disabled={busy || players.length < 2} className="btn-primary">
                 {players.length < 2 ? "Waiting for players..." : "Start game"}
               </button>
+              {me.turn_order === 0 && players.length === 1 && (
+                <button onClick={handleCancel} disabled={busy} className="btn-secondary">
+                  Cancel game
+                </button>
+              )}
             </div>
           )}
         </section>

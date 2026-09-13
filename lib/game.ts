@@ -51,7 +51,7 @@ async function getPlayers(sessionId: string): Promise<Player[]> {
 // logging failure break the actual game.
 async function logGameEvent(
   db: ReturnType<typeof getServiceClient>,
-  event: "created" | "started" | "finished",
+  event: "created" | "started" | "finished" | "cancelled",
   session: Pick<Session, "code" | "mode" | "genre" | "turn_seconds">,
   extra?: { player_count?: number; end_reason?: string | null; turns_played?: number },
 ) {
@@ -205,6 +205,28 @@ export async function createSession(
   await logGameEvent(db, "created", session as Session);
 
   return { session: session as Session, player: player as Player };
+}
+
+// Only the creator (turn_order 0) can cancel, and only before anyone else
+// has joined - once a second player is in the lobby, the game belongs to
+// the group, not just the host. Deletes the session outright (cascades to
+// the host's own player row) rather than adding a "cancelled" session
+// status - consistent with the no-history design, nothing to show for a
+// game that never started.
+export async function cancelSession(code: string, playerId: string) {
+  const db = getServiceClient();
+  const session = await getSessionByCode(code);
+  if (session.status !== "lobby") throw new GameError("Game already started");
+
+  const players = await getPlayers(session.id);
+  const host = players.find((p) => p.turn_order === 0);
+  if (!host || host.id !== playerId) throw new GameError("Only the creator can cancel this game");
+  if (players.length > 1) throw new GameError("Other players have already joined");
+
+  await logGameEvent(db, "cancelled", session);
+
+  const { error } = await db.from("sessions").delete().eq("id", session.id);
+  if (error) throw new GameError(error.message);
 }
 
 export async function joinSession(code: string, name: string) {

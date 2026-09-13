@@ -50,7 +50,7 @@ create table sentences (
 -- they get" (created -> started -> finished funnel).
 create table game_events (
   id uuid primary key default gen_random_uuid(),
-  event text not null check (event in ('created', 'started', 'finished')),
+  event text not null check (event in ('created', 'started', 'finished', 'cancelled')),
   session_code text not null,
   mode text not null,
   genre text,
