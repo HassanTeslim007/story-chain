@@ -9,6 +9,12 @@ export const MAX_TURN_SECONDS = 300; // 5 minutes
 // Chip options offered on the home page: 1-5 minutes.
 export const TURN_SECONDS_OPTIONS = [60, 120, 180, 240, 300];
 
+// A per-turn timer only does anything useful when other people are waiting
+// on you - against an AI there's nobody else it's fair to. 0 is a real
+// sentinel meaning "no deadline at all" (turn_deadline stays null), not a
+// clamped-down value - only offered as a chip in solo mode.
+export const UNLIMITED_TURN_SECONDS = 0;
+
 // Elimination mode has no host-facing turn cap - this is just a safety net
 // so a game between strong writers who never trip the avg<50 line can't run
 // forever. Generous on purpose; if it's ever reached, ranking falls back to

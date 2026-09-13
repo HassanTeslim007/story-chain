@@ -686,13 +686,20 @@ export default function SessionPage() {
             <aside className="order-3 lg:order-none lg:col-start-3 lg:row-start-1 lg:rotate-1 hover:lg:rotate-0 transition-transform duration-300">
               <div className="space-y-5">
                 {session.status === "active" &&
-                  (session.phase === "judging" ? (
-                    // Time is frozen while the judge is reading - shown to
-                    // every viewer, not just the submitter, so a ticking
-                    // countdown never implies someone's about to be timed
-                    // out for a turn they already submitted in time.
+                  // `judging` (local, set the instant this browser's own
+                  // submit fires) covers the submitter with zero latency;
+                  // `session.phase === "judging"` (server-confirmed, via
+                  // Realtime) covers every other viewer once it arrives.
+                  // Using only the server flag left the submitter's own
+                  // countdown visibly ticking for the round-trip it takes
+                  // Realtime to catch up, looking like time hadn't stopped.
+                  (judging || session.phase === "judging" ? (
                     <div className="card p-3 text-center text-sm opacity-70 animate-pulse-soft">
                       ✒️ The judge is reading {currentPlayer?.name ?? "their"}&apos;s line...
+                    </div>
+                  ) : session.phase === "turn" && !session.turn_deadline ? (
+                    <div className="card p-3 text-center text-sm opacity-70">
+                      ⏳ No time limit - {isMyTurn ? "take your time" : `waiting on ${currentPlayer?.name ?? "..."}`}
                     </div>
                   ) : (
                     <CountdownBar

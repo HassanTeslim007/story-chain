@@ -5,6 +5,7 @@ import {
   COOLDOWN_SECONDS,
   MIN_TURN_SECONDS,
   MAX_TURN_SECONDS,
+  UNLIMITED_TURN_SECONDS,
   ELIMINATION_SAFETY_TURN_CAP,
   MARATHON_TURN_OPTIONS,
   MAX_SENTENCE_LENGTH,
@@ -174,8 +175,12 @@ export async function createSession(
   const db = getServiceClient();
 
   // Clamp server-side - the UI enforces this range too, but requests can
-  // bypass the client, so the authoritative bound has to live here.
-  const seconds = Math.min(MAX_TURN_SECONDS, Math.max(MIN_TURN_SECONDS, Math.floor(turnSeconds) || 30));
+  // bypass the client, so the authoritative bound has to live here. 0 is a
+  // real sentinel (no per-turn deadline at all), not something to clamp up.
+  const seconds =
+    Math.floor(turnSeconds) === UNLIMITED_TURN_SECONDS
+      ? UNLIMITED_TURN_SECONDS
+      : Math.min(MAX_TURN_SECONDS, Math.max(MIN_TURN_SECONDS, Math.floor(turnSeconds) || 30));
   const resolvedMode: SessionMode = mode === "marathon" ? "marathon" : "elimination";
   const maxTurns =
     resolvedMode === "marathon"
@@ -531,7 +536,8 @@ export async function checkTimeout(code: string) {
       .from("sessions")
       .update({
         phase: "turn",
-        turn_deadline: new Date(Date.now() + session.turn_seconds * 1000).toISOString(),
+        turn_deadline:
+          session.turn_seconds > 0 ? new Date(Date.now() + session.turn_seconds * 1000).toISOString() : null,
       })
       .eq("id", session.id)
       .eq("phase", "cooldown")
@@ -542,14 +548,71 @@ export async function checkTimeout(code: string) {
     return { advanced: (updatedRows?.length ?? 0) > 0 };
   }
 
-  // A missed turn always eliminates, in both modes - it's an anti-stall
-  // safeguard against an AFK player, distinct from marathon's "no scoring
-  // pressure" pitch (which only covers the avg<50 elimination check above).
   const expiredPlayerId = session.current_turn_player_id;
   const players = await getPlayers(session.id);
-  const updatedPlayers = players.map((p) =>
-    p.id === expiredPlayerId ? { ...p, is_alive: false } : p,
-  );
+  const expiredPlayer = players.find((p) => p.id === expiredPlayerId)!;
+
+  if (session.mode === "marathon") {
+    // Marathon has no elimination at all (see resolveEnding) - a missed
+    // turn auto-scores 0 and the game moves on, same as any other turn,
+    // rather than knocking the player out for being slow.
+    const { data: inserted, error: insertError } = await db
+      .from("sentences")
+      .insert({
+        session_id: session.id,
+        player_id: expiredPlayerId,
+        turn_number: session.turn_number,
+        content: "(no submission - time expired)",
+        score: 0,
+        reasoning: "Ran out of time.",
+      })
+      .select("id")
+      .single();
+    if (insertError || !inserted) throw new GameError(insertError?.message ?? "Could not record the missed turn");
+
+    expiredPlayer.turns_taken += 1;
+    const ending = await resolveEnding(session, players.filter((p) => p.is_alive));
+
+    const patch: Partial<Session> = {
+      score_count: session.score_count + 1, // +0 to total_score, so only omitted here
+      ...(ending ?? {
+        current_turn_player_id: nextAlivePlayer(players, expiredPlayerId)!.id,
+        turn_number: session.turn_number + 1,
+        phase: "cooldown",
+        turn_deadline: new Date(Date.now() + COOLDOWN_SECONDS * 1000).toISOString(),
+      }),
+    };
+
+    const { data: updatedRows, error } = await db
+      .from("sessions")
+      .update(patch)
+      .eq("id", session.id)
+      .eq("current_turn_player_id", expiredPlayerId)
+      .eq("status", "active")
+      .eq("phase", "turn")
+      .select("id");
+    if (error) throw new GameError(error.message);
+    if (!updatedRows || updatedRows.length === 0) {
+      // A submit beat us to it - this 0-score turn never actually happened.
+      await db.from("sentences").delete().eq("id", inserted.id);
+      return { advanced: false };
+    }
+
+    await db.from("players").update({ turns_taken: expiredPlayer.turns_taken }).eq("id", expiredPlayerId);
+
+    if (ending) {
+      await logGameEvent(db, "finished", session, {
+        player_count: players.length,
+        end_reason: ending.end_reason ?? null,
+        turns_played: session.turn_number,
+      });
+    }
+    return { advanced: true };
+  }
+
+  // Elimination mode: a missed turn always eliminates - it's the anti-stall
+  // equivalent of dragging the average below 50.
+  const updatedPlayers = players.map((p) => (p.id === expiredPlayerId ? { ...p, is_alive: false } : p));
   const alive = updatedPlayers.filter((p) => p.is_alive);
   const ending = await resolveEnding(session, alive);
 

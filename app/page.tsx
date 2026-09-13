@@ -8,6 +8,7 @@ import type { Difficulty, Player, Session } from "@/lib/types";
 import { ThemePicker } from "@/components/ThemePicker";
 import {
   TURN_SECONDS_OPTIONS,
+  UNLIMITED_TURN_SECONDS,
   MARATHON_TURN_OPTIONS,
   ELIMINATION_SAFETY_TURN_CAP,
   GENRE_OPTIONS,
@@ -158,6 +159,10 @@ export default function HomePage() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [turnSeconds, setTurnSeconds] = useState(TURN_SECONDS_OPTIONS[0]);
+  // Separate from the multiplayer `turnSeconds` above - a per-turn timer
+  // only makes sense when other people are waiting on you, so solo defaults
+  // to no limit at all rather than sharing whatever the create-game tab has.
+  const [soloTurnSeconds, setSoloTurnSeconds] = useState<number>(UNLIMITED_TURN_SECONDS);
   const [gameMode, setGameMode] = useState<SessionMode>("elimination");
   const [maxTurns, setMaxTurns] = useState(MARATHON_TURN_OPTIONS[0]);
   const [genre, setGenre] = useState(""); // "" = surprise me
@@ -216,7 +221,7 @@ export default function HomePage() {
     try {
       const { ok, data } = await postJson<{ session: Session; player: Player }>("/api/session/solo", {
         hostName: name,
-        turnSeconds,
+        turnSeconds: soloTurnSeconds,
         maxTurnsPerPlayer: maxTurns,
         genre,
         difficulty,
@@ -303,11 +308,14 @@ export default function HomePage() {
               <div className="space-y-2.5">
                 <span className="text-sm opacity-60">Minutes per turn</span>
                 <Chips
-                  options={TURN_SECONDS_OPTIONS}
-                  value={turnSeconds}
-                  onChange={setTurnSeconds}
-                  format={(s) => `${s / 60}m`}
+                  options={[UNLIMITED_TURN_SECONDS, ...TURN_SECONDS_OPTIONS]}
+                  value={soloTurnSeconds}
+                  onChange={setSoloTurnSeconds}
+                  format={(s) => (s === UNLIMITED_TURN_SECONDS ? "No limit" : `${s / 60}m`)}
                 />
+                <p className="text-[11px] opacity-50 leading-snug">
+                  A timer only matters when someone else is waiting on you - take as long as you want against the AI.
+                </p>
               </div>
 
               <GenrePicker genre={genre} setGenre={setGenre} customGenre={customGenre} setCustomGenre={setCustomGenre} />

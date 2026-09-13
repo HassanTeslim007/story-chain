@@ -15,7 +15,10 @@ export async function POST(req: NextRequest) {
     if (!hostName || typeof hostName !== "string") {
       return NextResponse.json({ error: "hostName is required" }, { status: 400 });
     }
-    const seconds = Number(turnSeconds) || 30;
+    // Unlike /create, 0 is a real, UI-reachable value here (solo's "No
+    // limit" chip) - `|| 30` would silently coerce it back to a timed turn.
+    const parsedSeconds = Number(turnSeconds);
+    const seconds = Number.isFinite(parsedSeconds) ? parsedSeconds : 30;
     const { session, player } = await createSoloGame(
       hostName,
       seconds,
