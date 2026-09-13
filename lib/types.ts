@@ -2,6 +2,7 @@ export type SessionStatus = "lobby" | "active" | "finished";
 export type SessionPhase = "turn" | "judging" | "cooldown";
 export type SessionMode = "elimination" | "marathon";
 export type EndReason = "elimination" | "turn_cap";
+export type Difficulty = "easy" | "normal" | "hard";
 
 export type Session = {
   id: string;
@@ -12,6 +13,7 @@ export type Session = {
   max_turns_per_player: number;
   end_reason: EndReason | null;
   genre: string | null;
+  ai_difficulty: Difficulty | null;
   turn_seconds: number;
   current_turn_player_id: string | null;
   turn_number: number;
@@ -28,6 +30,7 @@ export type Player = {
   name: string;
   turn_order: number;
   is_alive: boolean;
+  is_ai: boolean;
   turns_taken: number;
   joined_at: string;
 };

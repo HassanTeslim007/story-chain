@@ -154,6 +154,48 @@ export default function SessionPage() {
       .catch(() => {});
   }, [secondsLeft, session, code, fetchState]);
 
+  // No server-side cron exists in this app - whoever's browser is watching
+  // the game is what notices (via Realtime) that the AI holds the turn and
+  // kicks it off. Fine for solo play: there's only ever one human watching.
+  const aiTurnFiredFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!session || session.status !== "active" || session.phase !== "turn") return;
+    const current = players.find((p) => p.id === session.current_turn_player_id);
+    if (!current?.is_ai) return;
+    const key = `${session.current_turn_player_id}-${session.turn_number}`;
+    if (aiTurnFiredFor.current === key) return;
+    aiTurnFiredFor.current = key;
+
+    // A failed request (network blip, DeepSeek retries exhausted) used to
+    // leave this permanently marked as "fired" with no way to try again -
+    // the only recovery was the anti-stall timeout eliminating the AI and
+    // ending the game early. Retry a few times with backoff first instead.
+    let cancelled = false;
+    let attempt = 0;
+    const tryOnce = () => {
+      fetch(`/api/session/${code}/ai-turn`, { method: "POST" })
+        .then(async (res) => {
+          if (cancelled) return;
+          if (!res.ok) throw new Error("ai-turn request failed");
+          await fetchState();
+        })
+        .catch(() => {
+          if (cancelled) return;
+          attempt += 1;
+          if (attempt < 3) {
+            setTimeout(tryOnce, 2000 * attempt);
+          } else {
+            aiTurnFiredFor.current = null;
+          }
+        });
+    };
+    tryOnce();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [session, players, code, fetchState]);
+
   const me = players.find((p) => p.id === playerId) ?? null;
   const isMyTurn = session?.status === "active" && session.phase === "turn" && session.current_turn_player_id === playerId;
   const isNextUpMe = session?.status === "active" && session.phase === "cooldown" && session.current_turn_player_id === playerId;
@@ -254,12 +296,23 @@ export default function SessionPage() {
     setRematchBusy(true);
     setError(null);
     try {
-      const { ok, data } = await postJson<{ session: Session; player: Player }>("/api/session/create", {
-        hostName: me.name,
-        turnSeconds: session!.turn_seconds,
-        mode: session!.mode,
-        maxTurnsPerPlayer: session!.max_turns_per_player,
-      });
+      // A solo game rematch has to go through /solo too, not /create - a
+      // plain marathon session would just wait forever for a second human
+      // to join, silently losing the "vs AI" continuation.
+      const { ok, data } = session!.ai_difficulty
+        ? await postJson<{ session: Session; player: Player }>("/api/session/solo", {
+            hostName: me.name,
+            turnSeconds: session!.turn_seconds,
+            maxTurnsPerPlayer: session!.max_turns_per_player,
+            genre: session!.genre,
+            difficulty: session!.ai_difficulty,
+          })
+        : await postJson<{ session: Session; player: Player }>("/api/session/create", {
+            hostName: me.name,
+            turnSeconds: session!.turn_seconds,
+            mode: session!.mode,
+            maxTurnsPerPlayer: session!.max_turns_per_player,
+          });
       if (!ok) {
         setError(data.error ?? "Something went wrong.");
         return;
@@ -417,12 +470,12 @@ export default function SessionPage() {
         </form>
       )}
 
-      {!me && session.status === "active" && players.some((p) => p.is_alive) && (
+      {!me && session.status === "active" && players.some((p) => p.is_alive && !p.is_ai) && (
         <section className="card p-4 space-y-2 text-center">
           <p className="text-sm opacity-70">Lost your seat? Tap your name to reconnect.</p>
           <div className="flex flex-wrap justify-center gap-2">
             {players
-              .filter((p) => p.is_alive)
+              .filter((p) => p.is_alive && !p.is_ai)
               .map((p) => (
                 <button
                   key={p.id}
@@ -443,6 +496,7 @@ export default function SessionPage() {
         <h2 className="section-label">
           Players {avg !== null && `· avg score ${avg.toFixed(1)}`}
           {round !== null && ` · round ${round}/${session.max_turns_per_player}`}
+          {session.ai_difficulty && ` · AI: ${session.ai_difficulty}`}
         </h2>
         <ul className="flex flex-wrap gap-2">
           {players.map((p) => (

@@ -11,6 +11,7 @@ create table sessions (
   max_turns_per_player int not null default 12, -- safety cap (elimination) or the whole point (marathon)
   end_reason text check (end_reason in ('elimination', 'turn_cap')),
   genre text,                              -- steers the AI opening; null/empty = "surprise me"
+  ai_difficulty text check (ai_difficulty in ('easy', 'normal', 'hard')), -- set only for solo-vs-AI games
   turn_seconds int not null default 30,
   current_turn_player_id uuid,
   turn_number int not null default 0,
@@ -27,6 +28,7 @@ create table players (
   name text not null,
   turn_order int not null,
   is_alive boolean not null default true,
+  is_ai boolean not null default false,    -- true for the AI opponent in a solo game
   turns_taken int not null default 0,      -- completed (submitted) turns, for the turn cap
   joined_at timestamptz not null default now()
 );

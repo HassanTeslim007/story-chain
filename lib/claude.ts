@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { Difficulty } from "./types";
 
 const DEEPSEEK_URL = "https://api.deepseek.com/chat/completions";
 const JUDGE_MODEL = "deepseek-flash";
@@ -24,15 +25,23 @@ function sleep(ms: number): Promise<void> {
 // impossible to forget this one, since it's the only type that skips retry.
 class NonRetryableError extends Error {}
 
-// Kept tight on purpose: this runs on Vercel Hobby's default 10s function
-// limit. The old code had no per-request timeout at all, so a slow/hanging
-// DeepSeek call just ran until the platform itself killed the invocation -
-// which returns an empty body, and crashes the client's res.json() with
-// "Unexpected end of JSON input" instead of a clean, catchable error. Better
-// to time out on our own terms, well inside that ceiling, than let the
-// platform do it for us.
+// Kept tight on purpose: this runs on Vercel Hobby, where the function
+// timeout may or may not actually honor the maxDuration export set on each
+// route (that's plan/rollout-dependent, not something confirmed here). The
+// old code had no per-request timeout at all, so a slow/hanging DeepSeek
+// call just ran until the platform itself killed the invocation - which
+// returns an empty body, and crashes the client's res.json() with
+// "Unexpected end of JSON input" instead of a clean, catchable error. Worst
+// case per call is now ~12.3s (attempt + 300ms backoff + retry) instead of
+// unbounded - resolveAiTurn chains two of these, so if Hobby's ceiling turns
+// out to be a hard, unconfigurable 10s regardless of maxDuration, that one
+// route can still lose the race. The ai-turn effect's own client-side retry
+// (app/session/[code]/page.tsx) and the anti-stall timeout fallback mean
+// that degrades to a retried/eventually-eliminated AI turn rather than
+// corrupted game state - but the real fix at that point would be splitting
+// the AI's turn into two separate round trips, not more tuning here.
 const MAX_ATTEMPTS = 2;
-const REQUEST_TIMEOUT_MS = 8000;
+const REQUEST_TIMEOUT_MS = 6000;
 
 async function callDeepSeek<T extends z.ZodType>(
   schema: T,
@@ -117,6 +126,39 @@ export async function generateOpening(genre?: string | null): Promise<string[]> 
     (parsed) => parsed.sentences.every(isClean),
   );
   return result.sentences;
+}
+
+// Steers writing quality only - the judge (scoreSentence, below) scores an
+// AI turn exactly like a human one, so difficulty never touches the score
+// directly. Asking a model to write "at 62/100" isn't reliable; asking it to
+// write better or worse prose is.
+const DIFFICULTY_INSTRUCTIONS: Record<Difficulty, string> = {
+  easy:
+    "Write a plain, straightforward continuation. Keep it simple and a little unimaginative - short, " +
+    "safe, not particularly creative. This should read as a mediocre turn, giving your opponent a real " +
+    "chance to out-write you.",
+  normal: "Write a solid, reasonably creative continuation - good but not exceptional, roughly matching a decent human writer's effort.",
+  hard:
+    "Write a vivid, highly creative, well-crafted continuation. Make it genuinely excellent - strong " +
+    "imagery, a real narrative hook, worthy of a top score.",
+};
+
+const AiSentenceSchema = z.object({
+  sentence: z.string(),
+});
+
+export async function generateAiSentence(storySoFar: string[], difficulty: Difficulty): Promise<string> {
+  const result = await callDeepSeek(
+    AiSentenceSchema,
+    "ai_sentence",
+    "You are one player in a collaborative story-writing game. Continue the story with exactly ONE new " +
+      "sentence that fits naturally after what's already there - don't resolve the plot, leave room for " +
+      `the next writer.\n\n${DIFFICULTY_INSTRUCTIONS[difficulty]}`,
+    `STORY SO FAR:\n${storySoFar.join(" ")}\n\nWrite the next sentence.`,
+    256,
+    (parsed) => isClean(parsed.sentence),
+  );
+  return result.sentence;
 }
 
 const ScoreSchema = z.object({

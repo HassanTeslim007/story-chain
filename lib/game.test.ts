@@ -9,6 +9,7 @@ function player(overrides: Partial<Player>): Player {
     name: "Player",
     turn_order: 0,
     is_alive: true,
+    is_ai: false,
     turns_taken: 0,
     joined_at: new Date().toISOString(),
     ...overrides,

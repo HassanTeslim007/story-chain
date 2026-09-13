@@ -27,3 +27,8 @@ export const MAX_SENTENCE_LENGTH = 1500;
 // (any genre, the original behavior); a host can also type a custom one.
 export const GENRE_OPTIONS = ["Fantasy", "Sci-Fi", "Mystery", "Horror", "Romance", "Comedy", "Adventure"] as const;
 export const MAX_GENRE_LENGTH = 60;
+
+// Solo-vs-AI difficulty. Only steers how well the AI writes (the judge
+// scores it the same as any human line) - not a literal score target, since
+// that's not something a model can reliably hit on request.
+export const DIFFICULTY_OPTIONS = ["easy", "normal", "hard"] as const;

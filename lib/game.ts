@@ -1,6 +1,6 @@
 import { getServiceClient } from "./supabaseServer";
-import { generateOpening, scoreSentence } from "./claude";
-import type { Player, Session, SessionMode } from "./types";
+import { generateOpening, generateAiSentence, scoreSentence } from "./claude";
+import type { Difficulty, Player, Session, SessionMode } from "./types";
 import {
   COOLDOWN_SECONDS,
   MIN_TURN_SECONDS,
@@ -9,6 +9,7 @@ import {
   MARATHON_TURN_OPTIONS,
   MAX_SENTENCE_LENGTH,
   MAX_GENRE_LENGTH,
+  DIFFICULTY_OPTIONS,
 } from "./constants";
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no 0/O/1/I
@@ -43,6 +44,18 @@ async function getPlayers(sessionId: string): Promise<Player[]> {
     .order("turn_order", { ascending: true });
   if (error) throw new GameError(error.message);
   return (data ?? []) as Player[];
+}
+
+async function getStorySoFar(sessionId: string): Promise<string[]> {
+  const db = getServiceClient();
+  const { data, error } = await db
+    .from("sentences")
+    .select("content")
+    .eq("session_id", sessionId)
+    .eq("removed", false)
+    .order("turn_number", { ascending: true });
+  if (error) throw new GameError(error.message);
+  return (data ?? []).map((r) => r.content as string);
 }
 
 // Best-effort funnel logging (created -> started -> finished). Insert-only,
@@ -156,6 +169,7 @@ export async function createSession(
   mode: SessionMode = "elimination",
   maxTurnsPerPlayer?: number,
   genre?: string | null,
+  difficulty?: Difficulty | null,
 ) {
   const db = getServiceClient();
 
@@ -190,6 +204,7 @@ export async function createSession(
       mode: resolvedMode,
       max_turns_per_player: maxTurns,
       genre: resolvedGenre,
+      ai_difficulty: difficulty ?? null,
     })
     .select("*")
     .single();
@@ -205,6 +220,66 @@ export async function createSession(
   await logGameEvent(db, "created", session as Session);
 
   return { session: session as Session, player: player as Player };
+}
+
+// Solo vs AI: only Marathon applies (no elimination pressure against an
+// opponent that can't be "out"), so mode is forced regardless of what's
+// passed in. Creates the session, seats the AI as a second player, and
+// starts the game immediately - there's no lobby to wait in when the
+// opponent is already there.
+export async function createSoloGame(
+  hostName: string,
+  turnSeconds: number,
+  maxTurnsPerPlayer: number | undefined,
+  genre: string | null | undefined,
+  difficulty: string | undefined,
+) {
+  const db = getServiceClient();
+  const resolvedDifficulty: Difficulty = (DIFFICULTY_OPTIONS as readonly string[]).includes(difficulty ?? "")
+    ? (difficulty as Difficulty)
+    : "normal";
+
+  const { session, player } = await createSession(
+    hostName,
+    turnSeconds,
+    "marathon",
+    maxTurnsPerPlayer,
+    genre,
+    resolvedDifficulty,
+  );
+
+  const { error: aiError } = await db
+    .from("players")
+    .insert({ session_id: session.id, name: "AI", turn_order: 1, is_ai: true });
+  if (aiError) throw new GameError(aiError.message);
+
+  await startGame(session.code);
+  const startedSession = await getSessionByCode(session.code);
+
+  return { session: startedSession, player };
+}
+
+// Triggered by the human's own client when it notices (via Realtime) that
+// the AI holds the current turn - there's no server-side cron in this app,
+// so whoever's watching the game kicks it off. Writing and scoring stay
+// fully decoupled: the AI's line goes through the exact same submitSentence
+// path as a human's, so turn rotation, the turn cap, and cooldown all just
+// work without any AI-specific branching there.
+export async function resolveAiTurn(code: string) {
+  const session = await getSessionByCode(code);
+  if (session.status !== "active" || session.phase !== "turn") {
+    return { advanced: false };
+  }
+  const players = await getPlayers(session.id);
+  const current = players.find((p) => p.id === session.current_turn_player_id);
+  if (!current?.is_ai) {
+    return { advanced: false };
+  }
+
+  const storySoFar = await getStorySoFar(session.id);
+  const sentence = await generateAiSentence(storySoFar, session.ai_difficulty ?? "normal");
+  await submitSentence(code, current.id, sentence);
+  return { advanced: true };
 }
 
 // Only the creator (turn_order 0) can cancel, and only before anyone else
@@ -320,103 +395,117 @@ export async function submitSentence(code: string, playerId: string, content: st
     throw new GameError("Turn already expired");
   }
 
-  const { data: sentenceRows, error: storyError } = await db
-    .from("sentences")
-    .select("content")
-    .eq("session_id", session.id)
-    .eq("removed", false)
-    .order("turn_number", { ascending: true });
-  if (storyError) throw new GameError(storyError.message);
-  const storySoFar = (sentenceRows ?? []).map((r) => r.content as string);
+  // Everything from here on can throw (the judge call, DB writes,
+  // resolveEnding's own query) while the session sits claimed in "judging".
+  // Nothing else can ever move a session out of "judging" - not checkTimeout
+  // (it explicitly no-ops there), not another submit (phase!=="turn" is
+  // rejected above) - so if this throws without reverting, the game is
+  // permanently stuck: no turn can ever be submitted or timed out again.
+  try {
+    const storySoFar = await getStorySoFar(session.id);
+    const { score, reasoning } = await scoreSentence(storySoFar, trimmed);
 
-  const { score, reasoning } = await scoreSentence(storySoFar, trimmed);
+    const { data: inserted, error: insertError } = await db
+      .from("sentences")
+      .insert({
+        session_id: session.id,
+        player_id: playerId,
+        turn_number: session.turn_number,
+        content: trimmed,
+        score,
+        reasoning,
+      })
+      .select("*")
+      .single();
+    if (insertError || !inserted) throw new GameError(insertError?.message ?? "Could not save sentence");
 
-  const { data: inserted, error: insertError } = await db
-    .from("sentences")
-    .insert({
-      session_id: session.id,
-      player_id: playerId,
-      turn_number: session.turn_number,
-      content: trimmed,
-      score,
-      reasoning,
-    })
-    .select("*")
-    .single();
-  if (insertError || !inserted) throw new GameError(insertError?.message ?? "Could not save sentence");
+    // Compute this turn's effect on player state in memory only for now -
+    // don't write turns_taken/is_alive until the guarded session update below
+    // confirms this turn actually stuck. Otherwise a concurrent timeout that
+    // wins the race leaves this player over-counted or wrongly eliminated,
+    // with only the sentence rolled back.
+    const players = await getPlayers(session.id);
+    const submitter = players.find((p) => p.id === playerId)!;
+    submitter.turns_taken += 1;
 
-  // Compute this turn's effect on player state in memory only for now -
-  // don't write turns_taken/is_alive until the guarded session update below
-  // confirms this turn actually stuck. Otherwise a concurrent timeout that
-  // wins the race leaves this player over-counted or wrongly eliminated,
-  // with only the sentence rolled back.
-  const players = await getPlayers(session.id);
-  const submitter = players.find((p) => p.id === playerId)!;
-  submitter.turns_taken += 1;
+    const newTotal = session.total_score + score;
+    const newCount = session.score_count + 1;
+    const avg = newTotal / newCount;
+    // Marathon mode has no score-based elimination - the turn cap is its only
+    // ending, handled by resolveEnding below.
+    const eliminated = session.mode === "elimination" && avg < 50;
+    if (eliminated) submitter.is_alive = false;
 
-  const newTotal = session.total_score + score;
-  const newCount = session.score_count + 1;
-  const avg = newTotal / newCount;
-  // Marathon mode has no score-based elimination - the turn cap is its only
-  // ending, handled by resolveEnding below.
-  const eliminated = session.mode === "elimination" && avg < 50;
-  if (eliminated) submitter.is_alive = false;
+    const finalTotal = eliminated ? session.total_score : newTotal;
+    const finalCount = eliminated ? session.score_count : newCount;
 
-  const finalTotal = eliminated ? session.total_score : newTotal;
-  const finalCount = eliminated ? session.score_count : newCount;
+    const alive = players.filter((p) => p.is_alive);
+    const ending = await resolveEnding(session, alive);
 
-  const alive = players.filter((p) => p.is_alive);
-  const ending = await resolveEnding(session, alive);
+    const patch: Partial<Session> = {
+      total_score: finalTotal,
+      score_count: finalCount,
+      ...(ending ?? {
+        current_turn_player_id: nextAlivePlayer(players, playerId)!.id,
+        turn_number: session.turn_number + 1,
+        phase: "cooldown",
+        turn_deadline: new Date(Date.now() + COOLDOWN_SECONDS * 1000).toISOString(),
+      }),
+    };
 
-  const patch: Partial<Session> = {
-    total_score: finalTotal,
-    score_count: finalCount,
-    ...(ending ?? {
-      current_turn_player_id: nextAlivePlayer(players, playerId)!.id,
-      turn_number: session.turn_number + 1,
-      phase: "cooldown",
-      turn_deadline: new Date(Date.now() + COOLDOWN_SECONDS * 1000).toISOString(),
-    }),
-  };
+    // Guarded update: this only fails now if the claim above somehow didn't
+    // stick (it should always be exclusive - nothing else can flip phase away
+    // from "judging" once claimed), kept as a defensive check rather than an
+    // expected race.
+    const { data: updatedRows, error: updateError } = await db
+      .from("sessions")
+      .update(patch)
+      .eq("id", session.id)
+      .eq("current_turn_player_id", playerId)
+      .eq("status", "active")
+      .eq("phase", "judging")
+      .select("id");
+    if (updateError) throw new GameError(updateError.message);
+    if (!updatedRows || updatedRows.length === 0) {
+      // Someone else's timeout check already advanced this turn - undo our
+      // score's effect on the story so it doesn't linger as a phantom entry.
+      // turns_taken/is_alive were never written, so there's nothing else to
+      // roll back.
+      await db.from("sentences").update({ removed: true }).eq("id", inserted.id);
+      throw new GameError("Turn already expired");
+    }
 
-  // Guarded update: this only fails now if the claim above somehow didn't
-  // stick (it should always be exclusive - nothing else can flip phase away
-  // from "judging" once claimed), kept as a defensive check rather than an
-  // expected race.
-  const { data: updatedRows, error: updateError } = await db
-    .from("sessions")
-    .update(patch)
-    .eq("id", session.id)
-    .eq("current_turn_player_id", playerId)
-    .eq("status", "active")
-    .eq("phase", "judging")
-    .select("id");
-  if (updateError) throw new GameError(updateError.message);
-  if (!updatedRows || updatedRows.length === 0) {
-    // Someone else's timeout check already advanced this turn - undo our
-    // score's effect on the story so it doesn't linger as a phantom entry.
-    // turns_taken/is_alive were never written, so there's nothing else to
-    // roll back.
-    await db.from("sentences").update({ removed: true }).eq("id", inserted.id);
-    throw new GameError("Turn already expired");
+    // Session update stuck - now it's safe to persist the player-side effects.
+    await db.from("players").update({ turns_taken: submitter.turns_taken }).eq("id", playerId);
+    if (eliminated) {
+      await db.from("sentences").update({ removed: true }).eq("id", inserted.id);
+      await db.from("players").update({ is_alive: false }).eq("id", playerId);
+    }
+
+    if (ending) {
+      await logGameEvent(db, "finished", session, {
+        player_count: players.length,
+        end_reason: ending.end_reason ?? null,
+        turns_played: session.turn_number,
+      });
+    }
+
+    return { score, reasoning, eliminated };
+  } catch (err) {
+    // Best-effort: hand the turn back rather than leave it stuck. Guarded so
+    // this can't clobber a state that already moved on for some other
+    // reason - if the row isn't still exactly what we claimed, do nothing.
+    await db
+      .from("sessions")
+      .update({ phase: "turn" })
+      .eq("id", session.id)
+      .eq("current_turn_player_id", playerId)
+      .eq("phase", "judging")
+      .then(({ error }) => {
+        if (error) console.error("Failed to revert stuck judging phase:", error.message);
+      });
+    throw err;
   }
-
-  // Session update stuck - now it's safe to persist the player-side effects.
-  await db.from("players").update({ turns_taken: submitter.turns_taken }).eq("id", playerId);
-  if (eliminated) {
-    await db.from("sentences").update({ removed: true }).eq("id", inserted.id);
-    await db.from("players").update({ is_alive: false }).eq("id", playerId);
-  }
-
-  if (ending) {
-    await logGameEvent(db, "finished", session, {
-      player_count: players.length,
-      end_reason: ending.end_reason ?? null,
-      turns_played: session.turn_number,
-    });
-  }
-
-  return { score, reasoning, eliminated };
 }
 
 export async function checkTimeout(code: string) {

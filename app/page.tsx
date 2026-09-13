@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { savePlayerIdentity } from "@/lib/identity";
 import { postJson } from "@/lib/apiFetch";
-import type { Player, Session } from "@/lib/types";
+import type { Difficulty, Player, Session } from "@/lib/types";
 import { ThemePicker } from "@/components/ThemePicker";
 import {
   TURN_SECONDS_OPTIONS,
@@ -12,6 +12,7 @@ import {
   ELIMINATION_SAFETY_TURN_CAP,
   GENRE_OPTIONS,
   MAX_GENRE_LENGTH,
+  DIFFICULTY_OPTIONS,
 } from "@/lib/constants";
 import type { SessionMode } from "@/lib/types";
 
@@ -48,6 +49,74 @@ function Chips<T extends string | number>({
   );
 }
 
+function GenrePicker({
+  genre,
+  setGenre,
+  customGenre,
+  setCustomGenre,
+}: {
+  genre: string;
+  setGenre: (g: string) => void;
+  customGenre: boolean;
+  setCustomGenre: (c: boolean) => void;
+}) {
+  return (
+    <div className="space-y-2.5">
+      <span className="text-sm opacity-60">Genre</span>
+      <div className="flex flex-wrap gap-1.5">
+        {["", ...GENRE_OPTIONS].map((opt) => {
+          const active = !customGenre && genre === opt;
+          return (
+            <button
+              key={opt || "surprise"}
+              type="button"
+              onClick={() => {
+                setCustomGenre(false);
+                setGenre(opt);
+              }}
+              className="text-sm px-3 py-1.5 border"
+              style={{
+                borderRadius: "var(--radius)",
+                borderColor: active ? "var(--accent)" : "var(--border)",
+                backgroundColor: active ? "var(--accent)" : "transparent",
+                color: active ? "white" : "var(--foreground)",
+              }}
+            >
+              {opt || "Surprise me"}
+            </button>
+          );
+        })}
+        <button
+          type="button"
+          onClick={() => {
+            setCustomGenre(true);
+            setGenre("");
+          }}
+          className="text-sm px-3 py-1.5 border"
+          style={{
+            borderRadius: "var(--radius)",
+            borderColor: customGenre ? "var(--accent)" : "var(--border)",
+            backgroundColor: customGenre ? "var(--accent)" : "transparent",
+            color: customGenre ? "white" : "var(--foreground)",
+          }}
+        >
+          Custom…
+        </button>
+      </div>
+      {customGenre && (
+        <input
+          className="field"
+          placeholder="e.g. cozy bakery mystery, cyberpunk heist..."
+          value={genre}
+          onChange={(e) => setGenre(e.target.value)}
+          maxLength={MAX_GENRE_LENGTH}
+          autoFocus
+        />
+      )}
+    </div>
+  );
+}
+
 const SAMPLE_STORY =
   "Once, in a city that forgot its own name, a locksmith found a door with no wall around it. " +
   "She turned the handle anyway, half-expecting nothing. The hinges sighed like they'd been " +
@@ -79,6 +148,12 @@ function StoryFramePreview() {
   );
 }
 
+const DIFFICULTY_BLURBS: Record<Difficulty, string> = {
+  easy: "The AI keeps it simple and a little unimaginative - a fair fight for a first game.",
+  normal: "The AI writes a solid, reasonably creative line each turn - a genuine contest.",
+  hard: "The AI goes all out - vivid, inventive lines that'll be tough to out-write.",
+};
+
 export default function HomePage() {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -87,8 +162,9 @@ export default function HomePage() {
   const [maxTurns, setMaxTurns] = useState(MARATHON_TURN_OPTIONS[0]);
   const [genre, setGenre] = useState(""); // "" = surprise me
   const [customGenre, setCustomGenre] = useState(false);
+  const [difficulty, setDifficulty] = useState<Difficulty>("normal");
   const [joinCode, setJoinCode] = useState("");
-  const [mode, setMode] = useState<"create" | "join">("create");
+  const [mode, setMode] = useState<"create" | "join" | "solo">("create");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -133,6 +209,29 @@ export default function HomePage() {
     }
   }
 
+  async function handleSolo(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      const { ok, data } = await postJson<{ session: Session; player: Player }>("/api/session/solo", {
+        hostName: name,
+        turnSeconds,
+        maxTurnsPerPlayer: maxTurns,
+        genre,
+        difficulty,
+      });
+      if (!ok) {
+        setError(data.error ?? "Something went wrong.");
+        return;
+      }
+      savePlayerIdentity(data.session.code, data.player.id);
+      router.push(`/session/${data.session.code}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <main className="flex-1 flex items-center justify-center p-6 lg:p-12">
       <div className="w-full max-w-sm lg:max-w-6xl lg:grid lg:grid-cols-2 lg:gap-16 lg:items-center">
@@ -144,6 +243,7 @@ export default function HomePage() {
               <li>✒️ The judge scores every line for coherence, creativity, and grammar</li>
               <li>⚔️ Elimination or Marathon — sudden death, or ranked by total score</li>
               <li>🔄 Live multiplayer — everyone sees every turn as it lands</li>
+              <li>🤖 Or play solo against an AI opponent, 3 difficulty levels</li>
             </ul>
           </div>
 
@@ -170,126 +270,127 @@ export default function HomePage() {
             >
               Join game
             </button>
+            <button
+              className="flex-1 py-2 transition-colors"
+              style={mode === "solo" ? { backgroundColor: "var(--accent)", color: "white" } : undefined}
+              onClick={() => setMode("solo")}
+            >
+              Play vs AI
+            </button>
           </div>
 
-          <form onSubmit={mode === "create" ? handleCreate : handleJoin} className="space-y-5">
-            <input
-              className="field"
-              placeholder="Your name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              required
-            />
-
-            {mode === "create" ? (
-              <>
-                <div className="space-y-2.5">
-                  <span className="text-sm opacity-60">Mode</span>
-                  <Chips
-                    options={["elimination", "marathon"] as const}
-                    value={gameMode}
-                    onChange={setGameMode}
-                    format={(m) => (m === "elimination" ? "Elimination" : "Marathon")}
-                  />
-                  <p className="text-[11px] opacity-50 leading-snug">
-                    {gameMode === "elimination"
-                      ? `Sudden death — drag the average below 50 and you're out. Last writer standing wins. Capped at ${ELIMINATION_SAFETY_TURN_CAP} turns each — if nobody's eliminated by then, highest total score wins.`
-                      : "No elimination — everyone writes the same number of turns, ranked by total score."}
-                  </p>
-                </div>
-
-                <div className="space-y-2.5">
-                  <span className="text-sm opacity-60">Minutes per turn</span>
-                  <Chips
-                    options={TURN_SECONDS_OPTIONS}
-                    value={turnSeconds}
-                    onChange={setTurnSeconds}
-                    format={(s) => `${s / 60}m`}
-                  />
-                </div>
-
-                <div className="space-y-2.5">
-                  <span className="text-sm opacity-60">Genre</span>
-                  <div className="flex flex-wrap gap-1.5">
-                    {["", ...GENRE_OPTIONS].map((opt) => {
-                      const active = !customGenre && genre === opt;
-                      return (
-                        <button
-                          key={opt || "surprise"}
-                          type="button"
-                          onClick={() => {
-                            setCustomGenre(false);
-                            setGenre(opt);
-                          }}
-                          className="text-sm px-3 py-1.5 border"
-                          style={{
-                            borderRadius: "var(--radius)",
-                            borderColor: active ? "var(--accent)" : "var(--border)",
-                            backgroundColor: active ? "var(--accent)" : "transparent",
-                            color: active ? "white" : "var(--foreground)",
-                          }}
-                        >
-                          {opt || "Surprise me"}
-                        </button>
-                      );
-                    })}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setCustomGenre(true);
-                        setGenre("");
-                      }}
-                      className="text-sm px-3 py-1.5 border"
-                      style={{
-                        borderRadius: "var(--radius)",
-                        borderColor: customGenre ? "var(--accent)" : "var(--border)",
-                        backgroundColor: customGenre ? "var(--accent)" : "transparent",
-                        color: customGenre ? "white" : "var(--foreground)",
-                      }}
-                    >
-                      Custom…
-                    </button>
-                  </div>
-                  {customGenre && (
-                    <input
-                      className="field"
-                      placeholder="e.g. cozy bakery mystery, cyberpunk heist..."
-                      value={genre}
-                      onChange={(e) => setGenre(e.target.value)}
-                      maxLength={MAX_GENRE_LENGTH}
-                      autoFocus
-                    />
-                  )}
-                </div>
-
-                {gameMode === "marathon" && (
-                  <div className="space-y-2.5">
-                    <span className="text-sm opacity-60">Turns per player</span>
-                    <Chips
-                      options={MARATHON_TURN_OPTIONS}
-                      value={maxTurns}
-                      onChange={setMaxTurns}
-                      format={(n) => String(n)}
-                    />
-                  </div>
-                )}
-              </>
-            ) : (
+          {mode === "solo" ? (
+            <form onSubmit={handleSolo} className="space-y-5">
               <input
-                className="field uppercase tracking-widest"
-                placeholder="Game code"
-                value={joinCode}
-                onChange={(e) => setJoinCode(e.target.value)}
+                className="field"
+                placeholder="Your name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
                 required
               />
-            )}
 
-            {error && <p className="text-sm text-red-500">{error}</p>}
+              <div className="space-y-2.5">
+                <span className="text-sm opacity-60">Difficulty</span>
+                <Chips
+                  options={DIFFICULTY_OPTIONS}
+                  value={difficulty}
+                  onChange={setDifficulty}
+                  format={(d) => d[0].toUpperCase() + d.slice(1)}
+                />
+                <p className="text-[11px] opacity-50 leading-snug">{DIFFICULTY_BLURBS[difficulty]}</p>
+              </div>
 
-            <button type="submit" disabled={loading} className="btn-primary w-full">
-              {loading ? "..." : mode === "create" ? "Create" : "Join"}
-            </button>
-          </form>
+              <div className="space-y-2.5">
+                <span className="text-sm opacity-60">Minutes per turn</span>
+                <Chips
+                  options={TURN_SECONDS_OPTIONS}
+                  value={turnSeconds}
+                  onChange={setTurnSeconds}
+                  format={(s) => `${s / 60}m`}
+                />
+              </div>
+
+              <GenrePicker genre={genre} setGenre={setGenre} customGenre={customGenre} setCustomGenre={setCustomGenre} />
+
+              <div className="space-y-2.5">
+                <span className="text-sm opacity-60">Turns per player</span>
+                <Chips options={MARATHON_TURN_OPTIONS} value={maxTurns} onChange={setMaxTurns} format={(n) => String(n)} />
+              </div>
+
+              {error && <p className="text-sm text-red-500">{error}</p>}
+
+              <button type="submit" disabled={loading} className="btn-primary w-full">
+                {loading ? "..." : "Play"}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={mode === "create" ? handleCreate : handleJoin} className="space-y-5">
+              <input
+                className="field"
+                placeholder="Your name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                required
+              />
+
+              {mode === "create" ? (
+                <>
+                  <div className="space-y-2.5">
+                    <span className="text-sm opacity-60">Mode</span>
+                    <Chips
+                      options={["elimination", "marathon"] as const}
+                      value={gameMode}
+                      onChange={setGameMode}
+                      format={(m) => (m === "elimination" ? "Elimination" : "Marathon")}
+                    />
+                    <p className="text-[11px] opacity-50 leading-snug">
+                      {gameMode === "elimination"
+                        ? `Sudden death — drag the average below 50 and you're out. Last writer standing wins. Capped at ${ELIMINATION_SAFETY_TURN_CAP} turns each — if nobody's eliminated by then, highest total score wins.`
+                        : "No elimination — everyone writes the same number of turns, ranked by total score."}
+                    </p>
+                  </div>
+
+                  <div className="space-y-2.5">
+                    <span className="text-sm opacity-60">Minutes per turn</span>
+                    <Chips
+                      options={TURN_SECONDS_OPTIONS}
+                      value={turnSeconds}
+                      onChange={setTurnSeconds}
+                      format={(s) => `${s / 60}m`}
+                    />
+                  </div>
+
+                  <GenrePicker genre={genre} setGenre={setGenre} customGenre={customGenre} setCustomGenre={setCustomGenre} />
+
+                  {gameMode === "marathon" && (
+                    <div className="space-y-2.5">
+                      <span className="text-sm opacity-60">Turns per player</span>
+                      <Chips
+                        options={MARATHON_TURN_OPTIONS}
+                        value={maxTurns}
+                        onChange={setMaxTurns}
+                        format={(n) => String(n)}
+                      />
+                    </div>
+                  )}
+                </>
+              ) : (
+                <input
+                  className="field uppercase tracking-widest"
+                  placeholder="Game code"
+                  value={joinCode}
+                  onChange={(e) => setJoinCode(e.target.value)}
+                  required
+                />
+              )}
+
+              {error && <p className="text-sm text-red-500">{error}</p>}
+
+              <button type="submit" disabled={loading} className="btn-primary w-full">
+                {loading ? "..." : mode === "create" ? "Create" : "Join"}
+              </button>
+            </form>
+          )}
         </div>
 
         <StoryFramePreview />
