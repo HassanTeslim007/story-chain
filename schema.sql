@@ -6,7 +6,7 @@ create table sessions (
   id uuid primary key default gen_random_uuid(),
   code text unique not null,               -- short join code, e.g. 6 chars
   status text not null default 'lobby',    -- lobby | active | finished
-  phase text not null default 'turn' check (phase in ('turn', 'cooldown')),
+  phase text not null default 'turn' check (phase in ('turn', 'judging', 'cooldown')),
   mode text not null default 'elimination' check (mode in ('elimination', 'marathon')),
   max_turns_per_player int not null default 12, -- safety cap (elimination) or the whole point (marathon)
   end_reason text check (end_reason in ('elimination', 'turn_cap')),

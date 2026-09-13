@@ -300,6 +300,26 @@ export async function submitSentence(code: string, playerId: string, content: st
     throw new GameError(`Keep it to one sentence - ${MAX_SENTENCE_LENGTH} characters max`);
   }
 
+  // Claim the turn before calling the judge, not after. Scoring can take a
+  // few seconds - without this, a submit that lands right before the
+  // deadline can still lose the race to a concurrent checkTimeout poll that
+  // fires while the judge is thinking, eliminating a player who actually
+  // submitted in time. Flipping to "judging" here makes checkTimeout back
+  // off entirely (see below) for as long as this takes - the time left is
+  // effectively frozen, not still running out underneath the judge call.
+  const { data: claimedRows, error: claimError } = await db
+    .from("sessions")
+    .update({ phase: "judging" })
+    .eq("id", session.id)
+    .eq("current_turn_player_id", playerId)
+    .eq("status", "active")
+    .eq("phase", "turn")
+    .select("id");
+  if (claimError) throw new GameError(claimError.message);
+  if (!claimedRows || claimedRows.length === 0) {
+    throw new GameError("Turn already expired");
+  }
+
   const { data: sentenceRows, error: storyError } = await db
     .from("sentences")
     .select("content")
@@ -359,15 +379,17 @@ export async function submitSentence(code: string, playerId: string, content: st
     }),
   };
 
-  // Guarded update: only apply if this turn hasn't already been resolved
-  // by a concurrent timeout call.
+  // Guarded update: this only fails now if the claim above somehow didn't
+  // stick (it should always be exclusive - nothing else can flip phase away
+  // from "judging" once claimed), kept as a defensive check rather than an
+  // expected race.
   const { data: updatedRows, error: updateError } = await db
     .from("sessions")
     .update(patch)
     .eq("id", session.id)
     .eq("current_turn_player_id", playerId)
     .eq("status", "active")
-    .eq("phase", "turn")
+    .eq("phase", "judging")
     .select("id");
   if (updateError) throw new GameError(updateError.message);
   if (!updatedRows || updatedRows.length === 0) {
@@ -401,6 +423,13 @@ export async function checkTimeout(code: string) {
   const db = getServiceClient();
   const session = await getSessionByCode(code);
   if (session.status !== "active" || !session.current_turn_player_id || !session.turn_deadline) {
+    return { advanced: false };
+  }
+  // A submit has claimed this turn and is waiting on the judge - the time
+  // left is frozen for as long as that takes. submitSentence is the only
+  // thing that moves a session out of "judging", so there's nothing for a
+  // timeout to do here regardless of how long the stored deadline says.
+  if (session.phase === "judging") {
     return { advanced: false };
   }
   if (new Date(session.turn_deadline).getTime() > Date.now()) {

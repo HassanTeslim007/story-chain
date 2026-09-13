@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { submitSentence, GameError } from "@/lib/game";
 import { checkRateLimit, clientIp } from "@/lib/rateLimit";
 
+// Raise the ceiling above the platform default (10s on Vercel Hobby) since
+// this calls DeepSeek - harmless to request even if the plan clamps it lower.
+export const maxDuration = 30;
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ code: string }> }) {
   try {
     // Generous on purpose: this is a same-room party game, so many

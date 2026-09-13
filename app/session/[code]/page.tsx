@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getPlayerIdentity, savePlayerIdentity } from "@/lib/identity";
+import { postJson } from "@/lib/apiFetch";
 import { COOLDOWN_SECONDS, MAX_SENTENCE_LENGTH } from "@/lib/constants";
 import { useSpeechToText } from "@/lib/useSpeechToText";
 import { useGameSounds } from "@/lib/useGameSounds";
@@ -148,7 +149,9 @@ export default function SessionPage() {
     const key = `${session.current_turn_player_id}-${session.turn_number}-${session.phase}`;
     if (timeoutFiredFor.current === key) return;
     timeoutFiredFor.current = key;
-    fetch(`/api/session/${code}/timeout`, { method: "POST" }).then(fetchState);
+    fetch(`/api/session/${code}/timeout`, { method: "POST" })
+      .then(fetchState)
+      .catch(() => {});
   }, [secondsLeft, session, code, fetchState]);
 
   const me = players.find((p) => p.id === playerId) ?? null;
@@ -192,14 +195,11 @@ export default function SessionPage() {
   async function handleJoin(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    const res = await fetch(`/api/session/${code}/join`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name: joinName }),
+    const { ok, data } = await postJson<{ session: Session; player: Player }>(`/api/session/${code}/join`, {
+      name: joinName,
     });
-    const data = await res.json();
-    if (!res.ok) {
-      setError(data.error);
+    if (!ok) {
+      setError(data.error ?? "Something went wrong.");
       return;
     }
     savePlayerIdentity(code, data.player.id);
@@ -210,10 +210,9 @@ export default function SessionPage() {
   async function handleStart() {
     setBusy(true);
     setError(null);
-    const res = await fetch(`/api/session/${code}/start`, { method: "POST" });
-    const data = await res.json();
+    const { ok, data } = await postJson(`/api/session/${code}/start`);
     setBusy(false);
-    if (!res.ok) setError(data.error);
+    if (!ok) setError(data.error ?? "Something went wrong.");
   }
 
   async function handleCancel() {
@@ -221,15 +220,10 @@ export default function SessionPage() {
     if (!window.confirm("Cancel this game? This can't be undone.")) return;
     setBusy(true);
     setError(null);
-    const res = await fetch(`/api/session/${code}/cancel`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ playerId }),
-    });
-    if (!res.ok) {
-      const data = await res.json();
+    const { ok, data } = await postJson(`/api/session/${code}/cancel`, { playerId });
+    if (!ok) {
       setBusy(false);
-      setError(data.error);
+      setError(data.error ?? "Something went wrong.");
       return;
     }
     router.push("/");
@@ -242,14 +236,9 @@ export default function SessionPage() {
     setJudging(true);
     setError(null);
     try {
-      const res = await fetch(`/api/session/${code}/submit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ playerId, content: draft }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error);
+      const { ok, data } = await postJson(`/api/session/${code}/submit`, { playerId, content: draft });
+      if (!ok) {
+        setError(data.error ?? "Something went wrong.");
         return;
       }
       setDraft("");
@@ -265,22 +254,18 @@ export default function SessionPage() {
     setRematchBusy(true);
     setError(null);
     try {
-      const res = await fetch("/api/session/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          hostName: me.name,
-          turnSeconds: session!.turn_seconds,
-          mode: session!.mode,
-          maxTurnsPerPlayer: session!.max_turns_per_player,
-        }),
+      const { ok, data } = await postJson<{ session: Session; player: Player }>("/api/session/create", {
+        hostName: me.name,
+        turnSeconds: session!.turn_seconds,
+        mode: session!.mode,
+        maxTurnsPerPlayer: session!.max_turns_per_player,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!ok) {
+        setError(data.error ?? "Something went wrong.");
+        return;
+      }
       savePlayerIdentity(data.session.code, data.player.id);
       router.push(`/session/${data.session.code}`);
-    } catch (err) {
-      setError((err as Error).message);
     } finally {
       setRematchBusy(false);
     }
@@ -624,21 +609,30 @@ export default function SessionPage() {
           {(session.status === "active" || judging || lastTurn || avg !== null) && (
             <aside className="order-3 lg:order-none lg:col-start-3 lg:row-start-1 lg:rotate-1 hover:lg:rotate-0 transition-transform duration-300">
               <div className="space-y-5">
-                {session.status === "active" && (
-                  <CountdownBar
-                    secondsLeft={secondsLeft ?? 0}
-                    totalSeconds={session.phase === "cooldown" ? COOLDOWN_SECONDS : session.turn_seconds}
-                    label={
-                      session.phase === "cooldown"
-                        ? isNextUpMe
-                          ? "You're up next"
-                          : `${currentPlayer?.name ?? "..."} is up next`
-                        : isMyTurn
-                          ? "Your turn"
-                          : `Waiting on ${currentPlayer?.name ?? "..."}`
-                    }
-                  />
-                )}
+                {session.status === "active" &&
+                  (session.phase === "judging" ? (
+                    // Time is frozen while the judge is reading - shown to
+                    // every viewer, not just the submitter, so a ticking
+                    // countdown never implies someone's about to be timed
+                    // out for a turn they already submitted in time.
+                    <div className="card p-3 text-center text-sm opacity-70 animate-pulse-soft">
+                      ✒️ The judge is reading {currentPlayer?.name ?? "their"}&apos;s line...
+                    </div>
+                  ) : (
+                    <CountdownBar
+                      secondsLeft={secondsLeft ?? 0}
+                      totalSeconds={session.phase === "cooldown" ? COOLDOWN_SECONDS : session.turn_seconds}
+                      label={
+                        session.phase === "cooldown"
+                          ? isNextUpMe
+                            ? "You're up next"
+                            : `${currentPlayer?.name ?? "..."} is up next`
+                          : isMyTurn
+                            ? "Your turn"
+                            : `Waiting on ${currentPlayer?.name ?? "..."}`
+                      }
+                    />
+                  ))}
 
                 {(judging || lastTurn || avg !== null) && (
                   <div

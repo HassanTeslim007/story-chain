@@ -1,5 +1,5 @@
 export type SessionStatus = "lobby" | "active" | "finished";
-export type SessionPhase = "turn" | "cooldown";
+export type SessionPhase = "turn" | "judging" | "cooldown";
 export type SessionMode = "elimination" | "marathon";
 export type EndReason = "elimination" | "turn_cap";
 

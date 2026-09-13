@@ -24,7 +24,15 @@ function sleep(ms: number): Promise<void> {
 // impossible to forget this one, since it's the only type that skips retry.
 class NonRetryableError extends Error {}
 
-const MAX_ATTEMPTS = 3;
+// Kept tight on purpose: this runs on Vercel Hobby's default 10s function
+// limit. The old code had no per-request timeout at all, so a slow/hanging
+// DeepSeek call just ran until the platform itself killed the invocation -
+// which returns an empty body, and crashes the client's res.json() with
+// "Unexpected end of JSON input" instead of a clean, catchable error. Better
+// to time out on our own terms, well inside that ceiling, than let the
+// platform do it for us.
+const MAX_ATTEMPTS = 2;
+const REQUEST_TIMEOUT_MS = 8000;
 
 async function callDeepSeek<T extends z.ZodType>(
   schema: T,
@@ -45,9 +53,12 @@ async function callDeepSeek<T extends z.ZodType>(
   let lastError: Error = new Error("DeepSeek call failed");
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    const timeoutController = new AbortController();
+    const timeout = setTimeout(() => timeoutController.abort(), REQUEST_TIMEOUT_MS);
     try {
       const response = await fetch(DEEPSEEK_URL, {
         method: "POST",
+        signal: timeoutController.signal,
         headers: {
           Authorization: `Bearer ${process.env.DEEPSEEK_API_KEY}`,
           "Content-Type": "application/json",
@@ -73,8 +84,15 @@ async function callDeepSeek<T extends z.ZodType>(
       throw new Error("DeepSeek returned malformed or unclean output");
     } catch (err) {
       if (err instanceof NonRetryableError) throw err;
-      lastError = err instanceof Error ? err : lastError;
-      if (attempt < MAX_ATTEMPTS - 1) await sleep(300 * 2 ** attempt);
+      lastError =
+        err instanceof Error && err.name === "AbortError"
+          ? new Error(`DeepSeek did not respond within ${REQUEST_TIMEOUT_MS}ms`)
+          : err instanceof Error
+            ? err
+            : lastError;
+      if (attempt < MAX_ATTEMPTS - 1) await sleep(300);
+    } finally {
+      clearTimeout(timeout);
     }
   }
   throw lastError;

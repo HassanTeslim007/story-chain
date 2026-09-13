@@ -3,6 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { savePlayerIdentity } from "@/lib/identity";
+import { postJson } from "@/lib/apiFetch";
+import type { Player, Session } from "@/lib/types";
 import { ThemePicker } from "@/components/ThemePicker";
 import {
   TURN_SECONDS_OPTIONS,
@@ -95,23 +97,19 @@ export default function HomePage() {
     setError(null);
     setLoading(true);
     try {
-      const res = await fetch("/api/session/create", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          hostName: name,
-          turnSeconds,
-          mode: gameMode,
-          maxTurnsPerPlayer: gameMode === "marathon" ? maxTurns : undefined,
-          genre,
-        }),
+      const { ok, data } = await postJson<{ session: Session; player: Player }>("/api/session/create", {
+        hostName: name,
+        turnSeconds,
+        mode: gameMode,
+        maxTurnsPerPlayer: gameMode === "marathon" ? maxTurns : undefined,
+        genre,
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      if (!ok) {
+        setError(data.error ?? "Something went wrong.");
+        return;
+      }
       savePlayerIdentity(data.session.code, data.player.id);
       router.push(`/session/${data.session.code}`);
-    } catch (err) {
-      setError((err as Error).message);
     } finally {
       setLoading(false);
     }
@@ -123,17 +121,13 @@ export default function HomePage() {
     setLoading(true);
     try {
       const code = joinCode.trim().toUpperCase();
-      const res = await fetch(`/api/session/${code}/join`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
+      const { ok, data } = await postJson<{ session: Session; player: Player }>(`/api/session/${code}/join`, { name });
+      if (!ok) {
+        setError(data.error ?? "Something went wrong.");
+        return;
+      }
       savePlayerIdentity(code, data.player.id);
       router.push(`/session/${code}`);
-    } catch (err) {
-      setError((err as Error).message);
     } finally {
       setLoading(false);
     }
