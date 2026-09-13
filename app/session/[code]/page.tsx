@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseBrowser";
 import { getPlayerIdentity, savePlayerIdentity } from "@/lib/identity";
 import { COOLDOWN_SECONDS, MAX_SENTENCE_LENGTH } from "@/lib/constants";
+import { useSpeechToText } from "@/lib/useSpeechToText";
 import { useGameSounds } from "@/lib/useGameSounds";
 import type { Player, Sentence, Session } from "@/lib/types";
 import Avatar from "@/components/Avatar";
@@ -44,6 +45,9 @@ export default function SessionPage() {
   const [playerId, setPlayerId] = useState<string | null>(null);
   const [joinName, setJoinName] = useState("");
   const [draft, setDraft] = useState("");
+  const mic = useSpeechToText((text) => {
+    setDraft((prev) => (prev ? `${prev.trim()} ${text}` : text).slice(0, MAX_SENTENCE_LENGTH));
+  });
   const [error, setError] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
   const [busy, setBusy] = useState(false);
@@ -683,9 +687,22 @@ export default function SessionPage() {
               <p className="text-xs opacity-50">
                 {draft.length}/{MAX_SENTENCE_LENGTH}
               </p>
-              <button type="submit" disabled={busy} className="btn-primary">
-                Submit sentence
-              </button>
+              <div className="flex items-center gap-2">
+                {mic.supported && (
+                  <button
+                    type="button"
+                    onClick={mic.listening ? mic.stop : mic.start}
+                    className={`btn-icon ${mic.listening ? "animate-pulse-soft" : ""}`}
+                    title={mic.listening ? "Stop dictation" : "Dictate your sentence"}
+                    style={mic.listening ? { borderColor: "var(--accent)", color: "var(--accent)" } : undefined}
+                  >
+                    {mic.listening ? "⏹" : "🎤"}
+                  </button>
+                )}
+                <button type="submit" disabled={busy} className="btn-primary">
+                  Submit sentence
+                </button>
+              </div>
             </div>
           </form>
         </div>
