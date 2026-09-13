@@ -137,6 +137,28 @@ export default function SessionPage() {
     return () => clearInterval(t);
   }, []);
 
+  // There's no server-side cron in this app - every turn transition
+  // (timeout checks, kicking off the AI's turn) depends on this tab's own
+  // timers running. Browsers throttle setInterval hard in backgrounded tabs
+  // (sometimes to once a minute or less), so alt-tabbing during a cooldown
+  // can stall the whole game until you come back. Force an immediate
+  // catch-up the moment the tab regains focus instead of waiting for the
+  // throttled interval to notice on its own.
+  useEffect(() => {
+    function catchUp() {
+      if (document.visibilityState === "visible") {
+        setNow(Date.now());
+        fetchState();
+      }
+    }
+    document.addEventListener("visibilitychange", catchUp);
+    window.addEventListener("focus", catchUp);
+    return () => {
+      document.removeEventListener("visibilitychange", catchUp);
+      window.removeEventListener("focus", catchUp);
+    };
+  }, [fetchState]);
+
   const secondsLeft = useMemo(() => {
     if (!session?.turn_deadline) return null;
     return Math.max(0, Math.ceil((new Date(session.turn_deadline).getTime() - now) / 1000));
