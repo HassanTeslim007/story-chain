@@ -566,20 +566,16 @@ export async function checkTimeout(code: string) {
     // Marathon has no elimination at all (see resolveEnding) - a missed
     // turn auto-scores 0 and the game moves on, same as any other turn,
     // rather than knocking the player out for being slow.
-    const { data: inserted, error: insertError } = await db
-      .from("sentences")
-      .insert({
-        session_id: session.id,
-        player_id: expiredPlayerId,
-        turn_number: session.turn_number,
-        content: "(no submission - time expired)",
-        score: 0,
-        reasoning: "Ran out of time.",
-      })
-      .select("id")
-      .single();
-    if (insertError || !inserted) throw new GameError(insertError?.message ?? "Could not record the missed turn");
-
+    //
+    // Claim first, write second - this used to insert the "no submission"
+    // sentence before knowing whether this call would actually win the
+    // race against a concurrent submit. Even a rolled-back insert is
+    // visible the instant it commits (Realtime broadcasts it to every
+    // connected client immediately), so a submit that landed a moment
+    // earlier - already graded and shown to the player - could get
+    // transiently overwritten by this phantom 0-score entry before the
+    // rollback caught up. Nothing here should be written until the claim
+    // has genuinely won.
     expiredPlayer.turns_taken += 1;
     const ending = await resolveEnding(session, players.filter((p) => p.is_alive));
 
@@ -603,10 +599,19 @@ export async function checkTimeout(code: string) {
       .select("id");
     if (error) throw new GameError(error.message);
     if (!updatedRows || updatedRows.length === 0) {
-      // A submit beat us to it - this 0-score turn never actually happened.
-      await db.from("sentences").delete().eq("id", inserted.id);
+      // A submit beat us to it - this turn never timed out, nothing to undo.
       return { advanced: false };
     }
+
+    const { error: insertError } = await db.from("sentences").insert({
+      session_id: session.id,
+      player_id: expiredPlayerId,
+      turn_number: session.turn_number,
+      content: "(no submission - time expired)",
+      score: 0,
+      reasoning: "Ran out of time.",
+    });
+    if (insertError) throw new GameError(insertError.message);
 
     await db.from("players").update({ turns_taken: expiredPlayer.turns_taken }).eq("id", expiredPlayerId);
 
