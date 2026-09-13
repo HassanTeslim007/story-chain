@@ -8,6 +8,7 @@ import { getPlayerIdentity, savePlayerIdentity } from "@/lib/identity";
 import { postJson } from "@/lib/apiFetch";
 import { COOLDOWN_SECONDS, MAX_SENTENCE_LENGTH } from "@/lib/constants";
 import { useSpeechToText } from "@/lib/useSpeechToText";
+import { useServerClockOffset } from "@/lib/useServerClockOffset";
 import { useGameSounds } from "@/lib/useGameSounds";
 import type { Player, Sentence, Session } from "@/lib/types";
 import Avatar from "@/components/Avatar";
@@ -50,7 +51,8 @@ export default function SessionPage() {
     setDraft((prev) => (prev ? `${prev.trim()} ${text}` : text).slice(0, MAX_SENTENCE_LENGTH));
   });
   const [error, setError] = useState<string | null>(null);
-  const [now, setNow] = useState(Date.now());
+  const { offset: clockOffset, refresh: refreshClockOffset } = useServerClockOffset();
+  const [now, setNow] = useState(() => Date.now() + clockOffset);
   const [busy, setBusy] = useState(false);
   const [judging, setJudging] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -133,9 +135,9 @@ export default function SessionPage() {
   }, [session?.id, fetchState]);
 
   useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 500);
+    const t = setInterval(() => setNow(Date.now() + clockOffset), 500);
     return () => clearInterval(t);
-  }, []);
+  }, [clockOffset]);
 
   // There's no server-side cron in this app - every turn transition
   // (timeout checks, kicking off the AI's turn) depends on this tab's own
@@ -143,12 +145,14 @@ export default function SessionPage() {
   // (sometimes to once a minute or less), so alt-tabbing during a cooldown
   // can stall the whole game until you come back. Force an immediate
   // catch-up the moment the tab regains focus instead of waiting for the
-  // throttled interval to notice on its own.
+  // throttled interval to notice on its own - also a good moment to
+  // re-check clock skew, since it tends to drift most after a laptop sleep.
   useEffect(() => {
     function catchUp() {
       if (document.visibilityState === "visible") {
-        setNow(Date.now());
+        setNow(Date.now() + clockOffset);
         fetchState();
+        refreshClockOffset();
       }
     }
     document.addEventListener("visibilitychange", catchUp);
@@ -157,7 +161,7 @@ export default function SessionPage() {
       document.removeEventListener("visibilitychange", catchUp);
       window.removeEventListener("focus", catchUp);
     };
-  }, [fetchState]);
+  }, [fetchState, clockOffset, refreshClockOffset]);
 
   const secondsLeft = useMemo(() => {
     if (!session?.turn_deadline) return null;
