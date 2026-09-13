@@ -479,7 +479,11 @@ export default function SessionPage() {
           backdropFilter: "blur(8px)",
         }}
       >
-        <h1 className="wordmark text-xl">Story Chain</h1>
+        <div className="flex items-center gap-2">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="" width={28} height={28} className="w-7 h-7 shrink-0" style={{ borderRadius: "var(--radius)" }} />
+          <h1 className="wordmark text-xl">Story Chain</h1>
+        </div>
         <div className="flex items-center gap-2">
           {avg !== null && avgColor && (
             <span className={`btn-icon font-mono font-bold ${avgColor.text}`} title="Running average">

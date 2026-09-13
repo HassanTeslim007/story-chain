@@ -242,7 +242,18 @@ export default function HomePage() {
       <div className="w-full max-w-sm lg:max-w-6xl lg:grid lg:grid-cols-2 lg:gap-16 lg:items-center">
         <div className="space-y-8">
           <div className="text-center lg:text-left space-y-3">
-            <h1 className="wordmark text-3xl lg:text-5xl">Story Chain</h1>
+            <div className="flex items-center justify-center lg:justify-start gap-3">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src="/logo.png"
+                alt="Story Chain"
+                width={56}
+                height={56}
+                className="w-14 h-14 shrink-0"
+                style={{ borderRadius: "var(--radius)" }}
+              />
+              <h1 className="wordmark text-3xl lg:text-5xl">Story Chain</h1>
+            </div>
             <p className="text-sm lg:text-base opacity-60">AI judges every line, sentence by sentence.</p>
             <ul className="text-xs lg:text-sm opacity-60 space-y-1.5 pt-2 inline-block text-left">
               <li>✒️ The judge scores every line for coherence, creativity, and grammar</li>
