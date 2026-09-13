@@ -1,58 +1,37 @@
-import { z } from "zod";
 import type { Difficulty } from "./types";
 
 const DEEPSEEK_URL = "https://api.deepseek.com/chat/completions";
 const JUDGE_MODEL = "deepseek-flash";
 
-// Models occasionally derail inside JSON output and append token soup (stray
-// braces, mixed scripts) after an otherwise-clean string. Real prose never
-// contains curly braces or 40+ char unbroken runs, so this catches it
-// cheaply without a second model call to judge the judge.
+// Models occasionally derail and produce token soup (stray braces, mixed
+// scripts) or leftover JSON habits. Real prose never contains curly braces
+// or 40+ char unbroken runs, so this catches it cheaply without a second
+// model call to judge the judge.
 function isClean(text: string): boolean {
   if (/[{}]/.test(text)) return false;
   if (/\S{40,}/.test(text)) return false;
   return true;
 }
 
-// DeepSeek's JSON mode is prompted, not schema-enforced (see the comment on
-// shapeHint below), so the model occasionally writes a literal newline/tab
-// inside a string value instead of escaping it as \n/\t. A raw control
-// character inside a JSON string is illegal - JSON.parse can't tell where
-// the string was supposed to end and throws "Unterminated string in JSON".
-// Escape any control character found while inside a quoted string before
-// parsing, rather than let a formatting slip from the model crash the call
-// (an unescaped `"` is a different, rarer failure mode this can't fix -
-// it closes the string early instead of leaving it unterminated).
-export function escapeControlCharsInStrings(raw: string): string {
-  let result = "";
-  let inString = false;
-  let escaped = false;
-  for (const ch of raw) {
-    if (!inString) {
-      result += ch;
-      if (ch === '"') inString = true;
-      continue;
-    }
-    if (escaped) {
-      result += ch;
-      escaped = false;
-    } else if (ch === "\\") {
-      result += ch;
-      escaped = true;
-    } else if (ch === '"') {
-      result += ch;
-      inString = false;
-    } else if (ch === "\n") {
-      result += "\\n";
-    } else if (ch === "\r") {
-      result += "\\r";
-    } else if (ch === "\t") {
-      result += "\\t";
-    } else {
-      result += ch;
+// Models asked for "just the sentence" often wrap it in quotes anyway,
+// despite being told not to - strip one matching pair if present.
+function stripWrappingQuotes(text: string): string {
+  const pairs: [string, string][] = [
+    ['"', '"'],
+    ["'", "'"],
+    ["“", "”"], // “ ”
+  ];
+  for (const [open, close] of pairs) {
+    if (text.length >= 2 && text.startsWith(open) && text.endsWith(close)) {
+      return text.slice(1, -1).trim();
     }
   }
-  return result;
+  return text;
+}
+
+// Defensive against the model ignoring "no numbering/bullets" instructions.
+function stripListMarker(line: string): string {
+  return line.replace(/^[-*]\s+/, "").replace(/^\d+[.)]\s*/, "");
 }
 
 function sleep(ms: number): Promise<void> {
@@ -68,12 +47,8 @@ class NonRetryableError extends Error {}
 
 // Kept tight on purpose: this runs on Vercel Hobby, where the function
 // timeout may or may not actually honor the maxDuration export set on each
-// route (that's plan/rollout-dependent, not something confirmed here). The
-// old code had no per-request timeout at all, so a slow/hanging DeepSeek
-// call just ran until the platform itself killed the invocation - which
-// returns an empty body, and crashes the client's res.json() with
-// "Unexpected end of JSON input" instead of a clean, catchable error. Worst
-// case per call is now ~12.3s (attempt + 300ms backoff + retry) instead of
+// route (that's plan/rollout-dependent, not something confirmed here). Worst
+// case per call is ~12.3s (attempt + 300ms backoff + retry) instead of
 // unbounded - resolveAiTurn chains two of these, so if Hobby's ceiling turns
 // out to be a hard, unconfigurable 10s regardless of maxDuration, that one
 // route can still lose the race. The ai-turn effect's own client-side retry
@@ -84,22 +59,21 @@ class NonRetryableError extends Error {}
 const MAX_ATTEMPTS = 2;
 const REQUEST_TIMEOUT_MS = 6000;
 
-async function callDeepSeek<T extends z.ZodType>(
-  schema: T,
-  schemaName: string,
+// DeepSeek's JSON mode is prompt-based, not schema-enforced - their own docs
+// note it can even return empty content. Rather than ask for JSON and then
+// defend against every way a model can mangle it (unescaped quotes, raw
+// control characters, truncation), these calls ask for plain text and parse
+// it with a small format-specific function instead. The trick that makes
+// this robust: the free-text field (a sentence, the judge's reasoning) is
+// always last, so it just consumes everything remaining - nothing after it
+// to protect, so nothing in it needs escaping, no matter what characters
+// the model writes.
+async function callDeepSeek<T>(
   system: string,
   user: string,
   maxTokens: number,
-  isResultClean: (parsed: z.infer<T>) => boolean = () => true,
-): Promise<z.infer<T>> {
-  // DeepSeek's JSON mode only supports response_format: {type: "json_object"} -
-  // no server-enforced schema like OpenAI/OpenRouter's strict json_schema. So
-  // the shape has to be spelled out in the prompt, and the Zod parse below is
-  // the only real guarantee of correctness (hence the retry loop).
-  const shapeHint =
-    `Respond with ONLY a JSON object (no other text) matching this schema, named "${schemaName}":\n` +
-    JSON.stringify(z.toJSONSchema(schema));
-
+  parse: (text: string) => T,
+): Promise<T> {
   let lastError: Error = new Error("DeepSeek call failed");
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
@@ -117,11 +91,20 @@ async function callDeepSeek<T extends z.ZodType>(
           model: JUDGE_MODEL,
           max_tokens: maxTokens,
           temperature: 0.7,
+          // deepseek-flash is a hybrid model with thinking mode ON by
+          // default - it spends the max_tokens budget on hidden
+          // reasoning_content first, and for these short creative/judging
+          // tasks that reasoning can consume the whole budget before ever
+          // writing an answer, returning empty content with
+          // finish_reason: "length". Disabling it fixed that outright in
+          // testing (confirmed via a direct API call) and is very likely
+          // the real cause of most "malformed output" retries seen before
+          // this - not JSON escaping, which was treating the symptom.
+          thinking: { type: "disabled" },
           messages: [
-            { role: "system", content: `${system}\n\n${shapeHint}` },
+            { role: "system", content: system },
             { role: "user", content: user },
           ],
-          response_format: { type: "json_object" },
         }),
       });
       if (!response.ok) {
@@ -129,9 +112,7 @@ async function callDeepSeek<T extends z.ZodType>(
         throw response.status >= 400 && response.status < 500 ? new NonRetryableError(message) : new Error(message);
       }
       const data = await response.json();
-      const parsed = schema.parse(JSON.parse(escapeControlCharsInStrings(data.choices[0].message.content)));
-      if (isResultClean(parsed)) return parsed;
-      throw new Error("DeepSeek returned malformed or unclean output");
+      return parse(data.choices[0].message.content as string);
     } catch (err) {
       if (err instanceof NonRetryableError) throw err;
       lastError =
@@ -148,25 +129,31 @@ async function callDeepSeek<T extends z.ZodType>(
   throw lastError;
 }
 
-const OpeningSchema = z.object({
-  sentences: z.array(z.string()).min(3).max(5),
-});
+// Exported for unit tests - pure text-in, text-out.
+export function parseOpeningLines(text: string): string[] {
+  const lines = text
+    .split("\n")
+    .map((l) => stripListMarker(l.trim()).trim())
+    .filter(Boolean);
+  if (lines.length < 3 || lines.length > 5 || !lines.every(isClean)) {
+    throw new Error("Opening response was malformed");
+  }
+  return lines;
+}
 
 export async function generateOpening(genre?: string | null): Promise<string[]> {
   const instruction = genre?.trim()
     ? `Write a fresh, original story opening in this genre/theme: ${genre.trim()}.`
     : "Write a fresh, original story opening. Pick any genre.";
-  const result = await callDeepSeek(
-    OpeningSchema,
-    "story_opening",
+  return callDeepSeek(
     "You write vivid, open-ended openings for a collaborative multiplayer story game. " +
-      "3-5 sentences. End on a hook that invites someone else to continue the story - " +
-      "don't resolve anything.",
+      "Respond with ONLY the opening itself: 3-5 sentences, one per line, nothing else - " +
+      "no title, no numbering or bullets, no extra commentary. End on a hook that invites " +
+      "someone else to continue the story - don't resolve anything.",
     instruction,
     1024,
-    (parsed) => parsed.sentences.every(isClean),
+    parseOpeningLines,
   );
-  return result.sentences;
 }
 
 // Steers writing quality only - the judge (scoreSentence, below) scores an
@@ -184,46 +171,53 @@ const DIFFICULTY_INSTRUCTIONS: Record<Difficulty, string> = {
     "imagery, a real narrative hook, worthy of a top score.",
 };
 
-const AiSentenceSchema = z.object({
-  sentence: z.string(),
-});
-
-export async function generateAiSentence(storySoFar: string[], difficulty: Difficulty): Promise<string> {
-  const result = await callDeepSeek(
-    AiSentenceSchema,
-    "ai_sentence",
-    "You are one player in a collaborative story-writing game. Continue the story with exactly ONE new " +
-      "sentence that fits naturally after what's already there - don't resolve the plot, leave room for " +
-      `the next writer.\n\n${DIFFICULTY_INSTRUCTIONS[difficulty]}`,
-    `STORY SO FAR:\n${storySoFar.join(" ")}\n\nWrite the next sentence.`,
-    256,
-    (parsed) => isClean(parsed.sentence),
-  );
-  return result.sentence;
+export function parseAiSentence(text: string): string {
+  const sentence = stripWrappingQuotes(text.trim());
+  if (!sentence || !isClean(sentence)) {
+    throw new Error("AI sentence response was malformed");
+  }
+  return sentence;
 }
 
-const ScoreSchema = z.object({
-  score: z.number().min(0).max(100),
-  reasoning: z.string(),
-});
-
-export type JudgeResult = z.infer<typeof ScoreSchema>;
-
-export async function scoreSentence(
-  storySoFar: string[],
-  newSentence: string,
-): Promise<JudgeResult> {
+export async function generateAiSentence(storySoFar: string[], difficulty: Difficulty): Promise<string> {
   return callDeepSeek(
-    ScoreSchema,
-    "sentence_score",
+    "You are one player in a collaborative story-writing game. Continue the story with exactly ONE new " +
+      "sentence that fits naturally after what's already there - don't resolve the plot, leave room for " +
+      "the next writer. Respond with ONLY that one sentence, nothing else - no quotation marks around " +
+      `it, no preamble, no labels.\n\n${DIFFICULTY_INSTRUCTIONS[difficulty]}`,
+    `STORY SO FAR:\n${storySoFar.join(" ")}\n\nWrite the next sentence.`,
+    256,
+    parseAiSentence,
+  );
+}
+
+export type JudgeResult = { score: number; reasoning: string };
+
+export function parseScoreResponse(text: string): JudgeResult {
+  const scoreMatch = text.match(/SCORE:\s*(\d{1,3})/i);
+  const reasoningMatch = text.match(/REASONING:\s*([\s\S]*)/i);
+  const score = scoreMatch ? Number(scoreMatch[1]) : NaN;
+  const reasoning = reasoningMatch ? reasoningMatch[1].trim() : "";
+  if (!Number.isFinite(score) || score < 0 || score > 100 || !reasoning || !isClean(reasoning)) {
+    throw new Error("Score response was malformed");
+  }
+  return { score, reasoning };
+}
+
+export async function scoreSentence(storySoFar: string[], newSentence: string): Promise<JudgeResult> {
+  return callDeepSeek(
     `You judge one turn of a collaborative story-writing elimination game. Score the NEW SENTENCE 0-100 on how well it continues the story, weighing in order of importance:
 1. Coherence & continuity - does it make sense given what came before, no contradictions
 2. Creativity & interest - does it move the story forward in an engaging way
 3. Grammar & writing quality
 
-Score harshly and use the full range: 50 is a mediocre/forgettable sentence, below 50 is weak, confusing, or breaks continuity, above 70 is genuinely good, 90+ is excellent. Players are eliminated when the game's average score drops below 50, so be honest rather than generous.`,
+Score harshly and use the full range: 50 is a mediocre/forgettable sentence, below 50 is weak, confusing, or breaks continuity, above 70 is genuinely good, 90+ is excellent. Players are eliminated when the game's average score drops below 50, so be honest rather than generous.
+
+Respond in EXACTLY this format, nothing else:
+SCORE: <a whole number 0-100>
+REASONING: <your reasoning, one paragraph>`,
     `STORY SO FAR:\n${storySoFar.join(" ")}\n\nNEW SENTENCE:\n${newSentence}`,
     512,
-    (parsed) => isClean(parsed.reasoning),
+    parseScoreResponse,
   );
 }
