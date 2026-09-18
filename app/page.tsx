@@ -6,6 +6,8 @@ import { savePlayerIdentity } from "@/lib/identity";
 import { postJson } from "@/lib/apiFetch";
 import type { Difficulty, Player, Session } from "@/lib/types";
 import { ThemePicker } from "@/components/ThemePicker";
+import HelpModal from "@/components/HelpModal";
+import { useFirstVisitHelp } from "@/lib/useFirstVisitHelp";
 import {
   TURN_SECONDS_OPTIONS,
   UNLIMITED_TURN_SECONDS,
@@ -157,6 +159,7 @@ const DIFFICULTY_BLURBS: Record<Difficulty, string> = {
 
 export default function HomePage() {
   const router = useRouter();
+  const help = useFirstVisitHelp("story-chain:seenIntro:home");
   const [name, setName] = useState("");
   const [turnSeconds, setTurnSeconds] = useState(TURN_SECONDS_OPTIONS[0]);
   // Separate from the multiplayer `turnSeconds` above - a per-turn timer
@@ -253,6 +256,9 @@ export default function HomePage() {
                 style={{ borderRadius: "var(--radius)" }}
               />
               <h1 className="wordmark text-3xl lg:text-5xl">Story Chain</h1>
+              <button onClick={help.reopen} className="btn-icon" title="How this works" aria-label="How this works">
+                ?
+              </button>
             </div>
             <p className="text-sm lg:text-base opacity-60">AI judges every line, sentence by sentence.</p>
             <ul className="text-xs lg:text-sm opacity-60 space-y-1.5 pt-2 inline-block text-left">
@@ -414,6 +420,19 @@ export default function HomePage() {
 
         <StoryFramePreview />
       </div>
+
+      {help.open && (
+        <HelpModal title="How Story Chain works" onClose={help.dismiss}>
+          <p>Everyone takes turns adding one sentence to a shared story.</p>
+          <p>An AI judge scores every line 0-100 for coherence, creativity, and grammar.</p>
+          <p>
+            <strong>Elimination</strong>: the story&apos;s shared average drops below 50 → you&apos;re out.{" "}
+            <strong>Marathon</strong>: no eliminations, ranked by your own total score at the end.
+          </p>
+          <p>Play solo against an AI opponent, or create/join a game with friends using a code.</p>
+          <p>Themes (Manuscript/Stage/Editor) are just visual — pick whichever you like.</p>
+        </HelpModal>
+      )}
     </main>
   );
 }

@@ -16,6 +16,8 @@ import CountdownBar from "@/components/CountdownBar";
 import ScoreChart from "@/components/ScoreChart";
 import Toasts, { type Toast } from "@/components/Toasts";
 import { ThemeCycleButton } from "@/components/ThemePicker";
+import HelpModal from "@/components/HelpModal";
+import { useFirstVisitHelp } from "@/lib/useFirstVisitHelp";
 import QRCode from "@/components/QRCode";
 
 function scoreColor(score: number | null): string {
@@ -52,6 +54,7 @@ export default function SessionPage() {
   });
   const [error, setError] = useState<string | null>(null);
   const { offset: clockOffset, refresh: refreshClockOffset } = useServerClockOffset();
+  const help = useFirstVisitHelp("story-chain:seenIntro:game");
   const [now, setNow] = useState(() => Date.now() + clockOffset);
   const [busy, setBusy] = useState(false);
   const [judging, setJudging] = useState(false);
@@ -466,6 +469,19 @@ export default function SessionPage() {
     >
       <Toasts toasts={toasts} />
 
+      {help.open && (
+        <HelpModal title="Playing a turn" onClose={help.dismiss}>
+          <p>Wait for your turn — shown at the bottom of the screen.</p>
+          <p>Type (or tap the mic to dictate) the next sentence in the story, then submit.</p>
+          <p>The judge scores it instantly, 0-100.</p>
+          <p>There&apos;s a short cooldown after each turn so everyone can read the verdict before the timer starts again.</p>
+          <p>
+            <strong>Elimination</strong>: drag the average below 50 and you&apos;re out. <strong>Marathon</strong>: no
+            eliminations — highest total score wins at the end.
+          </p>
+        </HelpModal>
+      )}
+
       {/* Header/join/players/lobby stay at reading width even on desktop -
           only the gameplay grid below uses the wider container, for its
           chart/verdict side columns. */}
@@ -493,6 +509,9 @@ export default function SessionPage() {
           <Link href="/" className="btn-icon" title="Back home">
             🏠
           </Link>
+          <button onClick={help.reopen} className="btn-icon" title="How this works" aria-label="How this works">
+            ?
+          </button>
           <ThemeCycleButton />
           <button onClick={sounds.toggleMuted} className="btn-icon" title={sounds.muted ? "Unmute" : "Mute"}>
             {sounds.muted ? "🔇" : "🔊"}

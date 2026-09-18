@@ -6,3 +6,9 @@
 [debug] [2026-09-12T21:16:21.307Z] > authorizing via signed-in user (qataloog2@gmail.com)
 [debug] [2026-09-12T21:46:01.805Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
 [debug] [2026-09-12T21:46:01.810Z] > authorizing via signed-in user (qataloog2@gmail.com)
+[debug] [2026-09-13T22:52:02.145Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-09-13T22:52:02.150Z] > authorizing via signed-in user (qataloog2@gmail.com)
+[debug] [2026-09-14T22:12:20.365Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-09-14T22:12:20.381Z] > authorizing via signed-in user (errandbuddies01@gmail.com)
+[debug] [2026-09-18T19:47:52.927Z] > command requires scopes: ["email","openid","https://www.googleapis.com/auth/cloudplatformprojects.readonly","https://www.googleapis.com/auth/firebase","https://www.googleapis.com/auth/cloud-platform"]
+[debug] [2026-09-18T19:47:52.932Z] > authorizing via signed-in user (errandbuddies01@gmail.com)
