@@ -52,3 +52,16 @@ export type GameState = {
   players: Player[];
   sentences: Sentence[];
 };
+
+export type GreatLine = {
+  id: string;
+  session_code: string;
+  turn_number: number;
+  context: string;
+  sentence: string;
+  author_name: string;
+  score: number;
+  mode: SessionMode;
+  genre: string | null;
+  created_at: string;
+};

@@ -83,6 +83,34 @@ async function logGameEvent(
   if (error) console.error("game_events insert failed:", error.message);
 }
 
+// Archives a standout line (score > 50) past the 24h session cleanup, so
+// genuinely good writing isn't lost when its game is purged. context is
+// plain, unattributed story text - only the line itself is credited to its
+// author, a deliberate one-off exception, not a precedent for logging names
+// elsewhere. Best-effort, like logGameEvent - never lets a logging failure
+// break the actual game.
+async function logGreatLine(
+  db: ReturnType<typeof getServiceClient>,
+  session: Pick<Session, "code" | "mode" | "genre">,
+  authorName: string,
+  turnNumber: number,
+  context: string[],
+  sentence: string,
+  score: number,
+) {
+  const { error } = await db.from("great_lines").insert({
+    session_code: session.code,
+    turn_number: turnNumber,
+    context: context.join(" "),
+    sentence,
+    author_name: authorName,
+    score,
+    mode: session.mode,
+    genre: session.genre,
+  });
+  if (error) console.error("great_lines insert failed:", error.message);
+}
+
 export function nextAlivePlayer(players: Player[], afterPlayerId: string): Player | null {
   const alive = players.filter((p) => p.is_alive);
   if (alive.length === 0) return null;
@@ -486,6 +514,13 @@ export async function submitSentence(code: string, playerId: string, content: st
     if (eliminated) {
       await db.from("sentences").update({ removed: true }).eq("id", inserted.id);
       await db.from("players").update({ is_alive: false }).eq("id", playerId);
+    }
+
+    // Archive a standout line regardless of eliminated - a genuinely good
+    // sentence that happened to land during a bad stretch is still a good
+    // sentence, decoupled from the shared-average mechanic's own luck.
+    if (score > 50) {
+      await logGreatLine(db, session, submitter.name, session.turn_number, storySoFar, trimmed, score);
     }
 
     if (ending) {

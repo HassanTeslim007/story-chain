@@ -63,18 +63,48 @@ create table game_events (
   created_at timestamptz not null default now()
 );
 
+-- Archive of standout individual lines (score > 50), kept past the 24h
+-- session cleanup so genuinely good writing isn't lost when its game is
+-- purged. The story-so-far context is plain text with NO attribution -
+-- only the highlighted line itself is credited to its author, a conscious
+-- exception, not a precedent for logging names elsewhere. No FK to
+-- sessions/players (survives their cleanup independently, like game_events).
+create table great_lines (
+  id uuid primary key default gen_random_uuid(),
+  session_code text not null,
+  turn_number int not null,
+  context text not null,      -- story so far, unattributed
+  sentence text not null,     -- the line that scored > 50
+  author_name text not null,  -- who wrote it - the one deliberate exception
+  score numeric not null,
+  mode text not null,
+  genre text,
+  created_at timestamptz not null default now()
+);
+
+-- Fixed-window per-IP rate limiting (see lib/rateLimit.ts). Rows are cheap
+-- and short-lived - swept by the same hourly cleanup job as sessions.
+create table rate_limits (
+  key text primary key,   -- "{route}:{ip}:{fixed window bucket}"
+  count int not null default 1,
+  created_at timestamptz not null default now()
+);
+
 alter table sessions enable row level security;
 alter table players enable row level security;
 alter table sentences enable row level security;
 alter table game_events enable row level security;
+alter table great_lines enable row level security;
+alter table rate_limits enable row level security;
 
 -- MVP: fully open policies (no auth). Tighten later if needed.
 create policy "public read sessions" on sessions for select using (true);
 create policy "public read players" on players for select using (true);
 create policy "public read sentences" on sentences for select using (true);
 
--- game_events gets NO policies at all - anon/authenticated clients have zero
--- access. Only the service-role key (which bypasses RLS) reads or writes it.
+-- game_events, great_lines, and rate_limits get NO policies at all -
+-- anon/authenticated clients have zero access. Only the service-role key
+-- (which bypasses RLS) reads or writes them.
 
 -- All writes go through server-side API routes using the service role key,
 -- which bypasses RLS, so no public write policies are defined.
